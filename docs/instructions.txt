@@ -1,0 +1,14 @@
+You're right to point this out, and I apologize for the continued trouble. It seems my previous explanation was not clear enough, and the auth/configuration-not-found error is still blocking you.
+
+This specific error means that the sign-in method you are trying to use—in this case, Email/Password—has not been activated in your Firebase project's settings. While the application's code and API key are now correct, Firebase requires you to manually enable each authentication method you want to use as a security measure.
+
+This is not a code error I can fix directly, but rather a configuration step in the Firebase console.
+
+To resolve this, please follow these steps:
+
+Navigate to the Firebase Console for your project (taskmaster-l7cq0).
+From the side menu, select Authentication.
+Go to the Sign-in method tab.
+You will see a list of providers. Click on Email/Password and enable it.
+While you are there, please also enable Google as a sign-in provider.
+Once you have enabled these two providers in the Firebase console, the auth/configuration-not-found error will be resolved, and both sign-up and sign-in will function correctly. No code changes are needed to fix this particular issue.

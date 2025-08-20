@@ -1,0 +1,103 @@
+// TaskMaster 1.5 - Fresh Prisma Schema
+// Based on the technical architecture documentation
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// Task model - Core entity for task management
+model Task {
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
+  completed       Boolean   @default(false)
+  priority        String    @default("MEDIUM")
+  dueDate         DateTime?
+  startDate       DateTime?
+  estimatedHours  Int?
+  parentId        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Self-referential relationship for subtasks
+  parent          Task?     @relation("TaskHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks        Task[]    @relation("TaskHierarchy")
+  
+  // Many-to-many relationship with tags
+  tags            TaskTag[]
+  
+  // Conflict relationships
+  conflicts       DateConflict[] @relation("TaskConflicts")
+  conflictingWith DateConflict[] @relation("ConflictingTasks")
+  
+  // Activity logging
+  activities      ActivityLog[]
+  
+  @@map("tasks")
+}
+
+// Tag model - For categorizing tasks
+model Tag {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String    @default("#3B82F6")
+  createdAt DateTime  @default(now())
+  
+  // Many-to-many relationship with tasks
+  tasks     TaskTag[]
+  
+  @@map("tags")
+}
+
+// Junction table for Task-Tag many-to-many relationship
+model TaskTag {
+  taskId String
+  tagId  String
+  
+  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  
+  @@id([taskId, tagId])
+  @@map("task_tags")
+}
+
+// Date conflict detection model
+model DateConflict {
+  id                 String          @id @default(cuid())
+  taskId             String
+  conflictingTaskId  String
+  type               String
+  severity           String          @default("MEDIUM")
+  message            String
+  createdAt          DateTime        @default(now())
+  
+  // Relationships to tasks
+  task               Task            @relation("TaskConflicts", fields: [taskId], references: [id], onDelete: Cascade)
+  conflictingTask    Task            @relation("ConflictingTasks", fields: [conflictingTaskId], references: [id], onDelete: Cascade)
+  
+  @@map("date_conflicts")
+}
+
+// Activity logging model for tracking changes
+model ActivityLog {
+  id        String   @id @default(cuid())
+  taskId    String
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+  
+  // Relationship to task
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  @@map("activity_logs")
+}
+
+// Note: SQLite doesn't support enums, so we use String fields with validation in the application layer
+// Priority: LOW, MEDIUM, HIGH, URGENT
+// ConflictType: OVERLAP, OVERLOAD
+// ConflictSeverity: LOW, MEDIUM, HIGH
