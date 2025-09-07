@@ -1,10 +1,12 @@
 'use client';
 
 // Importaciones necesarias para React y componentes de UI
-import React, { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Calendar, Tag, Clock, AlertCircle, Plus, MoreVertical } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
+import { ChevronDown, ChevronRight, Calendar, Tag, CheckSquare, AlertCircle, Plus, MoreVertical, Clock, History } from 'lucide-react';
+import { Priority } from '../types/task';
 import InlineTaskEditForm from './InlineTaskEditForm';
 import InlineSubtaskForm from './InlineSubtaskForm';
+import TaskHistory from './TaskHistory';
 
 /**
  * Interfaz que define la estructura de una etiqueta (tag)
@@ -17,6 +19,19 @@ interface Tag {
 }
 
 /**
+ * Interfaz que define la estructura de un grupo de tareas
+ * Utilizada para agrupar y organizar las tareas por categorías
+ */
+interface TaskGroup {
+  id: string;        // Identificador único del grupo
+  name: string;      // Nombre visible del grupo
+  description?: string; // Descripción opcional del grupo
+  color: string;     // Color hexadecimal para la visualización
+  createdAt: string; // Fecha de creación
+  updatedAt: string; // Fecha de última actualización
+}
+
+/**
  * Interfaz que define la estructura completa de una tarea
  * Incluye tanto tareas principales como subtareas
  */
@@ -25,15 +40,17 @@ interface Task {
   title: string;                                 // Título de la tarea
   description?: string;                          // Descripción opcional de la tarea
   completed: boolean;                            // Estado de completado
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'; // Nivel de prioridad
+  priority: Priority; // Nivel de prioridad
   dueDate?: string;                              // Fecha límite (opcional)
   startDate?: string;                            // Fecha de inicio (opcional)
   parentId?: string;                             // ID de la tarea padre (para subtareas)
+  groupId?: string;                              // ID del grupo al que pertenece la tarea
   createdAt: string;                             // Fecha de creación
   updatedAt: string;                             // Fecha de última actualización
   tags: { tag: Tag }[];                          // Etiquetas asociadas a la tarea
   subtasks: Task[];                              // Lista de subtareas
   parent?: Task;                                 // Referencia a la tarea padre
+  group?: TaskGroup;                             // Referencia al grupo al que pertenece
 }
 
 /**
@@ -49,15 +66,21 @@ interface TaskListProps {
   onSubtaskCreate: (parentId: string, subtaskData: {  // Función para crear subtareas
     title: string;
     description?: string;
-    priority: 'low' | 'medium' | 'high';
+    priority: Priority;
     dueDate?: string;
     tagIds: string[];
   }) => Promise<void>;
   availableTags: Tag[];                          // Lista de etiquetas disponibles
+  availableGroups?: TaskGroup[];                 // Lista de grupos disponibles
   selectedTags: string[];                        // Etiquetas seleccionadas para filtrar
+  selectedGroups?: string[];                     // Grupos seleccionados para filtrar
   priorityFilter: string;                        // Filtro de prioridad activo
   completedFilter: string;                       // Filtro de estado de completado
   isLoading?: boolean;                           // Estado de carga para operaciones asíncronas
+  isGroupedView?: boolean;                       // Indica si se debe mostrar la vista agrupada
+  onTaskStateUpdate?: (taskId: string, updatedTask: Task) => void; // Función para actualizar el estado local de una tarea
+  onBulkDelete?: (taskIds: string[]) => void;    // Función para eliminar múltiples tareas
+  onClearSelection?: (clearFn: () => void) => void; // Callback para recibir la función de limpiar selección
 }
 
 /**
@@ -73,10 +96,16 @@ const TaskList: React.FC<TaskListProps> = ({
   onTaskDelete,            // Callback para eliminar tarea
   onSubtaskCreate,         // Callback para crear subtarea
   availableTags,           // Etiquetas disponibles para asignar
+  availableGroups = [],    // Grupos disponibles para asignar
   selectedTags,            // Etiquetas seleccionadas en filtros
+  selectedGroups = [],     // Grupos seleccionados en filtros
   priorityFilter,          // Filtro de prioridad activo
   completedFilter,         // Filtro de estado activo
-  isLoading = false        // Estado de carga global
+  isLoading = false,       // Estado de carga global
+  isGroupedView = false,   // Indica si se debe mostrar la vista agrupada
+  onTaskStateUpdate,       // Callback para actualizar estado local de tarea
+  onBulkDelete,            // Callback para eliminar múltiples tareas
+  onClearSelection         // Callback para limpiar selección múltiple
 }) => {
   // Estados para gestionar las interacciones de la interfaz de usuario
   
@@ -88,6 +117,15 @@ const TaskList: React.FC<TaskListProps> = ({
   
   /** Estado que rastrea qué tareas han sido clickeadas (para mostrar botón Add Subtask) */
   const [clickedTasks, setClickedTasks] = useState<Set<string>>(new Set());
+  
+  /** Estado para manejar el delay del hover en el botón Add Subtask */
+  const [hoverDelayTask, setHoverDelayTask] = useState<string | null>(null);
+  
+  /** Estado para manejar las animaciones de completar tareas */
+  const [completingTasks, setCompletingTasks] = useState<Set<string>>(new Set());
+  
+  /** Referencias para los timeouts del hover delay */
+  const hoverTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   
   /** Estado que controla qué menús contextuales están abiertos */
   const [openMenus, setOpenMenus] = useState<Set<string>>(new Set());
@@ -103,12 +141,58 @@ const TaskList: React.FC<TaskListProps> = ({
   
   /** Estado que controla para qué tareas se está creando una subtarea */
   const [creatingSubtasks, setCreatingSubtasks] = useState<Set<string>>(new Set());
+  
+  /** Estado que rastrea el progreso anterior de cada tarea para detectar cambios */
+  const [previousProgress, setPreviousProgress] = useState<Record<string, number>>({});
+  
+  /** Estado que controla qué tareas están animando su barra de progreso */
+  const [animatingProgress, setAnimatingProgress] = useState<Set<string>>(new Set());
+  
+  /** Estado que controla qué tareas tienen el historial visible */
+  const [visibleHistory, setVisibleHistory] = useState<Set<string>>(new Set());
+  
+  /** Estado que controla qué tareas están seleccionadas para eliminación múltiple */
+  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set());
+  
+  /** Estado que controla si el modo de selección múltiple está activo */
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
+  
+  /**
+   * Función para limpiar la selección múltiple
+   */
+  const clearSelection = React.useCallback(() => {
+    setSelectedTasks(new Set());
+    setIsMultiSelectMode(false);
+  }, []);
+  
+  /**
+   * Exponer la función de limpiar selección al componente padre
+   * Usamos useEffect para evitar problemas de renderizado durante el ciclo de render
+   */
+  React.useEffect(() => {
+    if (onClearSelection) {
+      onClearSelection(clearSelection);
+    }
+  }, [onClearSelection, clearSelection]);
+
+  // Nota: El cierre automático del modo de selección múltiple se maneja
+  // exclusivamente a través de la función clearSelection llamada desde el componente padre
 
   /**
    * Effect para manejar clicks globales y ocultar elementos de la UI
    * Se ejecuta una sola vez al montar el componente
    */
   useEffect(() => {
+    /**
+     * Función que maneja el evento personalizado para activar modo de selección múltiple
+     */
+    const handleToggleMultiSelect = () => {
+      toggleMultiSelectMode();
+    };
+
+    // Agregar listener para el evento personalizado
+    window.addEventListener('toggleMultiSelect', handleToggleMultiSelect);
+
     /**
      * Función que maneja clicks globales en el documento
      * Cierra menús contextuales, botones de Add Subtask y formularios de edición cuando se hace click fuera
@@ -122,6 +206,14 @@ const TaskList: React.FC<TaskListProps> = ({
       const inlineEditForm = target.closest('[data-inline-edit-form]');
       const inlineSubtaskForm = target.closest('[data-inline-subtask-form]');
       const dateRangePicker = target.closest('[data-date-range-picker]');
+      const historyPanel = target.closest('[data-history-panel]');
+      const historyButton = target.closest('[data-history-button]');
+      const commentSection = target.closest('[data-comment-section]');
+      const commentButton = target.closest('[data-comment-button]');
+      const commentForm = target.closest('[data-comment-form]');
+      const commentTextarea = target.closest('[data-comment-textarea]');
+      const commentCancel = target.closest('[data-comment-cancel]');
+      const commentSubmit = target.closest('[data-comment-submit]');
       
       if (!taskContainer) {
         // Click fuera de cualquier tarea, limpiar todas las tareas clickeadas
@@ -131,6 +223,11 @@ const TaskList: React.FC<TaskListProps> = ({
       if (!contextMenu) {
         // Click fuera de cualquier menú contextual, cerrar todos los menús
         setOpenMenus(new Set());
+      }
+      
+      if (!historyPanel && !historyButton && !commentSection && !commentButton && !commentForm && !commentTextarea && !commentCancel && !commentSubmit) {
+        // Click fuera del panel de historial y botón, cerrar todos los historiales
+        setVisibleHistory(new Set());
       }
       
       if (!editingInput && !taskContainer && !inlineEditForm && !inlineSubtaskForm && !dateRangePicker) {
@@ -151,8 +248,67 @@ const TaskList: React.FC<TaskListProps> = ({
     return () => {
       document.removeEventListener('click', handleGlobalClick);
       document.removeEventListener('touchstart', handleGlobalClick);
+      window.removeEventListener('toggleMultiSelect', handleToggleMultiSelect);
+      
+      // Limpiar timeout del hover delay si existe
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
     };
   }, []); // Array de dependencias vacío = se ejecuta solo una vez
+
+  /**
+   * Effect para detectar cambios en el progreso de las tareas y activar animaciones
+   * Se ejecuta cada vez que cambia la lista de tareas
+   */
+  useEffect(() => {
+    const newProgress: Record<string, number> = {};
+    const tasksToAnimate = new Set<string>();
+
+    // Función recursiva para procesar tareas y subtareas
+    const processTask = (task: Task) => {
+      if (task.subtasks && task.subtasks.length > 0) {
+        const currentProgress = calculateSubtaskProgress(task.subtasks);
+        const previousProgressValue = previousProgress[task.id] || 0;
+        
+        newProgress[task.id] = currentProgress;
+        
+        // Si el progreso cambió, activar animación
+        if (currentProgress !== previousProgressValue && previousProgressValue !== undefined) {
+          tasksToAnimate.add(task.id);
+        }
+      }
+      
+      // Procesar subtareas recursivamente
+      task.subtasks?.forEach(processTask);
+    };
+
+    // Procesar todas las tareas
+    tasks.forEach(processTask);
+    
+    // Actualizar el progreso anterior
+    setPreviousProgress(prev => {
+      // Solo actualizar si hay cambios reales
+      const hasChanges = Object.keys(newProgress).some(taskId => 
+        newProgress[taskId] !== (prev[taskId] || 0)
+      );
+      
+      if (hasChanges) {
+        return newProgress;
+      }
+      return prev;
+    });
+    
+    // Activar animaciones para tareas que cambiaron
+    if (tasksToAnimate.size > 0) {
+      setAnimatingProgress(tasksToAnimate);
+      
+      // Desactivar animaciones después de 1.5 segundos
+      setTimeout(() => {
+        setAnimatingProgress(new Set());
+      }, 1500);
+    }
+  }, [tasks]); // Solo depende de las tareas, no del progreso anterior
 
   /**
    * Configuración de colores y etiquetas para los diferentes niveles de prioridad
@@ -206,6 +362,23 @@ const TaskList: React.FC<TaskListProps> = ({
   };
 
   /**
+   * Función para manejar el toggle del historial de una tarea padre
+   * @param taskId - ID de la tarea padre
+   */
+  const handleHistoryToggle = (taskId: string) => {
+    setVisibleHistory(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(taskId)) {
+        newSet.delete(taskId);
+      } else {
+        newSet.clear(); // Solo mostrar un historial a la vez
+        newSet.add(taskId);
+      }
+      return newSet;
+    });
+  };
+
+  /**
    * Filtrado de tareas basado en los criterios seleccionados
    * Aplica filtros de estado de completado, prioridad y etiquetas
    */
@@ -222,6 +395,13 @@ const TaskList: React.FC<TaskListProps> = ({
       const taskTagIds = task.tags.map(t => t.tag.id); // Extraer IDs de etiquetas de la tarea
       const hasSelectedTag = selectedTags.some(tagId => taskTagIds.includes(tagId)); // Verificar si tiene alguna etiqueta seleccionada
       if (!hasSelectedTag) return false;
+    }
+
+    // Filtrar por grupos seleccionados
+    if (selectedGroups.length > 0) {
+      if (!task.groupId || !selectedGroups.includes(task.groupId)) {
+        return false;
+      }
     }
 
     return true; // La tarea pasa todos los filtros
@@ -261,6 +441,138 @@ const TaskList: React.FC<TaskListProps> = ({
     // Si esta tarea ya está clickeada, clickearla de nuevo ocultará el botón (newClickedTasks permanece vacío)
     
     setClickedTasks(newClickedTasks);
+  };
+
+  /**
+   * Maneja el hover con delay para el botón Add Subtask
+   * @param taskId - ID de la tarea sobre la que se hace hover
+   */
+  const handleTaskHoverEnter = (taskId: string) => {
+    setHoveredTask(taskId);
+    
+    // Limpiar timeout anterior si existe
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    
+    // Establecer delay de 800ms antes de mostrar el botón Add Subtask
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoverDelayTask(taskId);
+    }, 800);
+  };
+
+  /**
+   * Maneja cuando el mouse sale de la tarea
+   */
+  const handleTaskHoverLeave = () => {
+    setHoveredTask(null);
+    setHoverDelayTask(null);
+    
+    // Limpiar timeout si existe
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+  };
+
+  /**
+   * Función para alternar la selección de una tarea en modo selección múltiple
+   * @param taskId - ID de la tarea a seleccionar/deseleccionar
+   */
+  const toggleTaskSelection = (taskId: string) => {
+    setSelectedTasks(prev => {
+      const newSelected = new Set(prev);
+      if (newSelected.has(taskId)) {
+        newSelected.delete(taskId);
+      } else {
+        newSelected.add(taskId);
+      }
+      return newSelected;
+    });
+  };
+
+  /**
+   * Función para seleccionar todas las tareas visibles
+   */
+  const selectAllTasks = () => {
+    const allTaskIds = new Set<string>();
+    const addTaskIds = (tasks: Task[]) => {
+      tasks.forEach(task => {
+        allTaskIds.add(task.id);
+        if (task.subtasks && task.subtasks.length > 0) {
+          addTaskIds(task.subtasks);
+        }
+      });
+    };
+    addTaskIds(filteredTasks);
+    setSelectedTasks(allTaskIds);
+  };
+
+  /**
+   * Función para eliminar las tareas seleccionadas
+   */
+  const deleteSelectedTasks = () => {
+    if (selectedTasks.size === 0) return;
+    
+    // Si no hay función onBulkDelete, usar el comportamiento anterior con window.confirm
+    if (!onBulkDelete) {
+      const confirmMessage = `¿Estás seguro de que quieres eliminar ${selectedTasks.size} tarea${selectedTasks.size > 1 ? 's' : ''}?`;
+      
+      if (window.confirm(confirmMessage)) {
+        selectedTasks.forEach(taskId => {
+          onTaskDelete(taskId);
+        });
+        setSelectedTasks(new Set());
+        setIsMultiSelectMode(false);
+      }
+      return;
+    }
+    
+    const taskIds = Array.from(selectedTasks);
+    onBulkDelete(taskIds);
+    
+    // Limpiar selección inmediatamente después de llamar onBulkDelete
+    // para asegurar que la UI se actualice correctamente
+    setSelectedTasks(new Set());
+    setIsMultiSelectMode(false);
+  };
+
+  /**
+   * Función para alternar el modo de selección múltiple
+   */
+  const toggleMultiSelectMode = () => {
+    setIsMultiSelectMode(prev => !prev);
+    if (isMultiSelectMode) {
+      setSelectedTasks(new Set());
+    }
+  };
+
+  /**
+   * Maneja la animación de completar tarea
+   * @param taskId - ID de la tarea
+   * @param completed - Nuevo estado de completado
+   */
+  const handleTaskToggleWithAnimation = (taskId: string, completed: boolean) => {
+    if (completed) {
+      // Agregar animación de completado
+      setCompletingTasks(prev => new Set(prev).add(taskId));
+      
+      // Ejecutar la función original después de un breve delay para la animación
+      setTimeout(() => {
+        onTaskToggle(taskId, completed);
+        // Remover de la animación después de completar
+        setTimeout(() => {
+          setCompletingTasks(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(taskId);
+            return newSet;
+          });
+        }, 300);
+      }, 150);
+    } else {
+      // Para descompletar, no necesitamos animación especial
+      onTaskToggle(taskId, completed);
+    }
   };
 
   /**
@@ -341,7 +653,30 @@ const TaskList: React.FC<TaskListProps> = ({
    */
   const handleParentTaskUpdate = async (parentId: string, parentData: Partial<Task>) => {
     try {
-      await onTaskUpdate(parentId, parentData);
+      // Hacer la petición directamente con el header de resolución de conflictos
+      const response = await fetch(`/api/tasks/${parentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-conflict-resolution': 'true' // Header para identificar actualizaciones por conflictos
+        },
+        body: JSON.stringify(parentData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Failed to update parent task' }));
+        throw new Error(errorData.message || 'Failed to update parent task');
+      }
+
+      const updatedTask = await response.json();
+      
+      // Actualizar el estado local usando el callback si está disponible
+      if (onTaskStateUpdate) {
+        onTaskStateUpdate(parentId, updatedTask);
+      }
+      
+      console.log('Parent task updated successfully by conflict resolution:', updatedTask);
+      
     } catch (error) {
       console.error('Error updating parent task:', error);
       throw error; // Re-lanzar el error para que lo maneje el componente que llama
@@ -384,7 +719,7 @@ const TaskList: React.FC<TaskListProps> = ({
   const handleSubtaskCreate = async (parentId: string, subtaskData: {
     title: string;
     description?: string;
-    priority: 'low' | 'medium' | 'high';
+    priority: Priority;
     dueDate?: string;
     tagIds: string[];
   }) => {
@@ -547,6 +882,43 @@ const TaskList: React.FC<TaskListProps> = ({
   };
 
   /**
+   * Calcula el porcentaje de progreso de las subtareas completadas
+   * @param subtasks - Array de subtareas
+   * @returns Porcentaje de subtareas completadas (0-100)
+   */
+  const calculateSubtaskProgress = (subtasks: Task[]) => {
+    if (!subtasks || subtasks.length === 0) return 0;
+    const completedCount = subtasks.filter(subtask => subtask.completed).length;
+    return Math.round((completedCount / subtasks.length) * 100);
+  };
+
+  /**
+   * Genera los estilos CSS para la barra de progreso de fondo
+   * @param progress - Porcentaje de progreso (0-100)
+   * @param taskId - ID de la tarea para verificar si está animando
+   * @returns Objeto con estilos CSS para el gradiente de fondo
+   */
+  const getProgressBarStyles = (progress: number, taskId: string) => {
+    if (progress === 0) return {};
+    
+    const isAnimating = animatingProgress.has(taskId);
+    
+    return {
+      backgroundImage: `linear-gradient(to right, 
+        rgba(34, 197, 94, 0.08) 0%, 
+        rgba(34, 197, 94, 0.12) ${Math.max(progress - 5, 0)}%, 
+        rgba(34, 197, 94, 0.18) ${progress}%, 
+        rgba(34, 197, 94, 0.05) ${Math.min(progress + 2, 100)}%, 
+        transparent ${Math.min(progress + 5, 100)}%, 
+        transparent 100%
+      )`,
+      backgroundSize: '100% 100%',
+      backgroundRepeat: 'no-repeat',
+      transition: isAnimating ? 'all 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)' : 'all 0.3s ease-out'
+    };
+  };
+
+  /**
    * Función principal para renderizar una tarea individual
    * Maneja tanto tareas principales como subtareas de forma recursiva
    * @param task - Tarea a renderizar
@@ -558,18 +930,23 @@ const TaskList: React.FC<TaskListProps> = ({
     const hasSubtasks = task.subtasks && task.subtasks.length > 0; // Verificar si tiene subtareas
     const isExpanded = expandedTasks.has(task.id); // Verificar si está expandida
     const overdue = task.dueDate && isOverdue(task.dueDate, task.completed); // Verificar si está vencida
+    const subtaskProgress = hasSubtasks ? calculateSubtaskProgress(task.subtasks) : 0; // Calcular progreso de subtareas
+    const progressBarStyles = hasSubtasks ? getProgressBarStyles(subtaskProgress, task.id) : {}; // Estilos de barra de progreso
 
     return (
       // Contenedor principal de la tarea con indentación para subtareas
       <div key={task.id} className={`${level > 0 ? 'ml-6 border-l-2 border-gray-200 pl-4' : ''}`}>
-        {/* Tarjeta de la tarea con estilos condicionales */}
+        {/* Tarjeta de la tarea con estilos condicionales y barra de progreso */}
         <div 
-          className={`bg-white rounded-lg border border-gray-200 p-4 mb-3 shadow-sm hover:shadow-md transition-shadow ${
+          className={`bg-white rounded-lg border border-gray-200 p-4 mb-3 shadow-sm hover:shadow-md transition-all duration-300 ${
             task.completed ? 'opacity-75' : '' // Opacidad reducida para tareas completadas
-          } ${overdue ? 'border-red-300 bg-red-50' : ''}`} // Estilo especial para tareas vencidas
+          } ${overdue ? 'border-red-300 bg-red-50' : ''} ${
+            completingTasks.has(task.id) ? 'transform scale-105 bg-green-50 border-green-300 shadow-lg' : ''
+          }`} // Estilo especial para tareas vencidas y animación de completado
+          style={progressBarStyles} // Aplicar estilos de barra de progreso como fondo
           data-task-container
-          onMouseEnter={() => setHoveredTask(task.id)} // Activar hover effect
-          onMouseLeave={() => setHoveredTask(null)}   // Desactivar hover effect
+          onMouseEnter={() => handleTaskHoverEnter(task.id)} // Activar hover effect con delay
+          onMouseLeave={handleTaskHoverLeave}   // Desactivar hover effect
           onClick={(e) => {
             // Solo activar toggleTaskClick si el click no es en el título o input de edición
             const target = e.target as HTMLElement;
@@ -582,6 +959,18 @@ const TaskList: React.FC<TaskListProps> = ({
           <div className="flex items-start justify-between">
             {/* Sección izquierda: botón expandir, checkbox y contenido */}
             <div className="flex items-start space-x-3 flex-1">
+              {/* Checkbox para selección múltiple (solo visible en modo selección múltiple) */}
+              {isMultiSelectMode && (
+                <div className="mt-1">
+                  <input
+                    type="checkbox"
+                    checked={selectedTasks.has(task.id)}
+                    onChange={() => toggleTaskSelection(task.id)}
+                    className="w-4 h-4 text-blue-600 bg-blue-100 border-blue-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200"
+                  />
+                </div>
+              )}
+              
               {/* Botón de expandir/colapsar para tareas con subtareas */}
               {hasSubtasks && (
                 <button
@@ -601,8 +990,11 @@ const TaskList: React.FC<TaskListProps> = ({
                 <input
                   type="checkbox"
                   checked={task.completed}
-                  onChange={(e) => onTaskToggle(task.id, e.target.checked)}
-                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                  onChange={(e) => handleTaskToggleWithAnimation(task.id, e.target.checked)}
+                  disabled={isMultiSelectMode}
+                  className={`w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200 ${
+                    completingTasks.has(task.id) ? 'transform scale-110' : ''
+                  } ${isMultiSelectMode ? 'opacity-50 cursor-not-allowed' : ''}`}
                 />
               </div>
 
@@ -640,21 +1032,57 @@ const TaskList: React.FC<TaskListProps> = ({
                     </h3>
                   )}
                   
-                  {/* Etiquetas de la tarea (movidas desde la posición del badge de prioridad) */}
-                  {task.tags && task.tags.length > 0 && (
-                    <>
-                      {task.tags.map(({ tag }) => (
-                        <span
-                          key={tag.id}
-                          className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white"
-                          style={{ backgroundColor: tag.color }} // Color personalizado de la etiqueta
+                  {/* Etiquetas de la tarea y porcentaje de progreso */}
+                  <div className="flex items-center space-x-2">
+                    {/* Etiquetas de la tarea */}
+                    {task.tags && task.tags.length > 0 && (
+                      <>
+                        {task.tags.map(({ tag }) => (
+                          <span
+                            key={tag.id}
+                            className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white"
+                            style={{ backgroundColor: tag.color }} // Color personalizado de la etiqueta
+                          >
+                            <Tag className="w-3 h-3 mr-1" />
+                            {tag.name}
+                          </span>
+                        ))}
+                      </>
+                    )}
+                    
+                    {/* Indicador del grupo (solo en vista normal, no agrupada) */}
+                    {!isGroupedView && task.group && (
+                      <span
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border"
+                        style={{ 
+                          backgroundColor: `${task.group.color}20`, 
+                          borderColor: task.group.color,
+                          color: task.group.color
+                        }}
+                        title={`Grupo: ${task.group.name}${task.group.description ? ` - ${task.group.description}` : ''}`}
+                      >
+                        <div 
+                          className="w-2 h-2 rounded-full mr-1" 
+                          style={{ backgroundColor: task.group.color }}
+                        />
+                        {task.group.name}
+                      </span>
+                    )}
+                    
+                    {/* Porcentaje de progreso de subtareas */}
+                      {hasSubtasks && (
+                        <span 
+                          className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 transition-all duration-500 hover:bg-green-200 hover:scale-105 animate-in fade-in slide-in-from-left-2"
+                          style={{
+                            animation: 'progressFadeIn 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                            animationDelay: '0.2s',
+                            animationFillMode: 'both'
+                          }}
                         >
-                          <Tag className="w-3 h-3 mr-1" />
-                          {tag.name}
+                          {subtaskProgress}%
                         </span>
-                      ))}
-                    </>
-                  )}
+                      )}
+                  </div>
 
                   {/* Indicador de tarea vencida */}
                   {overdue && (
@@ -693,7 +1121,7 @@ const TaskList: React.FC<TaskListProps> = ({
                 {/* Mostrar contador de subtareas completadas si tiene subtareas */}
                 {hasSubtasks && (
                   <div className="flex items-center space-x-1">
-                    <Clock className="w-3 h-3" />
+                    <CheckSquare className="w-3 h-3" />
                     <span>
                       {task.subtasks && task.subtasks.filter(st => st.completed).length}/{task.subtasks && task.subtasks.length} subtasks
                     </span>
@@ -701,14 +1129,35 @@ const TaskList: React.FC<TaskListProps> = ({
                 )}
               </div>
               
-              {/* Menú contextual con opciones de editar y eliminar */}
-              <div className="relative" data-context-menu>
-                <button
-                  onClick={(e) => toggleContextMenu(task.id, e)}
-                  className="p-1 text-gray-400 hover:text-gray-600 transition-colors rounded hover:bg-gray-100"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </button>
+              {/* Botones de acción */}
+              <div className="flex items-center gap-1">
+                {/* Botón de historial - solo para tareas padre */}
+                {!task.parentId && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleHistoryToggle(task.id);
+                    }}
+                    className={`p-1 transition-colors rounded hover:bg-gray-100 ${
+                      visibleHistory.has(task.id) 
+                        ? 'text-blue-600 bg-blue-50' 
+                        : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                    data-history-button
+                    title="Ver historial"
+                  >
+                    <History className="w-4 h-4" />
+                  </button>
+                )}
+                
+                {/* Menú contextual con opciones de editar y eliminar */}
+                <div className="relative" data-context-menu>
+                  <button
+                    onClick={(e) => toggleContextMenu(task.id, e)}
+                    className="p-1 text-gray-400 hover:text-gray-600 transition-colors rounded hover:bg-gray-100"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
                 
                 {/* Dropdown del menú contextual */}
                 {openMenus.has(task.id) && (
@@ -735,6 +1184,7 @@ const TaskList: React.FC<TaskListProps> = ({
                     </button>
                   </div>
                 )}
+                </div>
               </div>
             </div>
           </div>
@@ -746,6 +1196,7 @@ const TaskList: React.FC<TaskListProps> = ({
               <InlineTaskEditForm
                 task={task} // Tarea a editar
                 availableTags={availableTags} // Etiquetas disponibles para asignar
+                availableGroups={availableGroups} // Grupos disponibles para asignar
                 onSave={(taskData) => handleInlineTaskSave(task.id, taskData)} // Guardar cambios
                 onCancel={() => cancelInlineEditing(task.id)} // Cancelar edición
                 isLoading={isLoading} // Estado de carga para operaciones asíncronas
@@ -770,7 +1221,9 @@ const TaskList: React.FC<TaskListProps> = ({
                   id: task.id,
                   title: task.title,
                   startDate: task.startDate,
-                  dueDate: task.dueDate
+                  dueDate: task.dueDate,
+                  priority: task.priority,
+                  tags: task.tags
                 }}
                 availableTags={availableTags} // Etiquetas disponibles para la subtarea
                 onSave={(subtaskData) => handleSubtaskCreate(task.id, subtaskData)} // Crear nueva subtarea
@@ -781,19 +1234,30 @@ const TaskList: React.FC<TaskListProps> = ({
             </div>
           )}
 
-          {/* Add Subtask Button - appears on hover or click/tap */}
-          {(hoveredTask === task.id || clickedTasks.has(task.id)) && !creatingSubtasks.has(task.id) && (
-            <div className="mt-3 pt-2 border-t border-gray-100">
+          {/* Add Subtask Button - appears on hover with delay or click/tap */}
+          {(hoverDelayTask === task.id || clickedTasks.has(task.id)) && !creatingSubtasks.has(task.id) && (
+            <div className="mt-3 pt-2 border-t border-gray-100 animate-in fade-in duration-200">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   startCreatingSubtask(task.id);
                 }}
-                className="w-full flex items-center justify-center px-3 py-2 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors border border-dashed border-gray-300 hover:border-blue-300"
+                className="w-full flex items-center justify-center px-3 py-2 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all duration-200 border border-dashed border-gray-300 hover:border-blue-300 hover:scale-105"
               >
                 <Plus className="w-4 h-4 mr-2 flex-shrink-0" />
                 Add Subtask
               </button>
+            </div>
+          )}
+          
+          {/* Panel de historial - solo para tareas padre */}
+          {!task.parentId && visibleHistory.has(task.id) && (
+            <div className="mt-4 border-t pt-4" data-history-panel>
+              <TaskHistory 
+                taskId={task.id}
+                isVisible={true}
+                onClose={() => handleHistoryToggle(task.id)}
+              />
             </div>
           )}
         </div>
@@ -833,13 +1297,146 @@ const TaskList: React.FC<TaskListProps> = ({
     );
   }
 
+  // Barra de acciones para selección múltiple
+  const renderMultiSelectBar = () => {
+    if (!isMultiSelectMode) return null;
+
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <span className="text-sm font-medium text-blue-900">
+              {selectedTasks.size} tarea{selectedTasks.size !== 1 ? 's' : ''} seleccionada{selectedTasks.size !== 1 ? 's' : ''}
+            </span>
+            <button
+              onClick={selectAllTasks}
+              className="text-sm text-blue-600 hover:text-blue-800 underline"
+            >
+              Seleccionar todas
+            </button>
+            <button
+              onClick={clearSelection}
+              className="text-sm text-blue-600 hover:text-blue-800 underline"
+            >
+              Deseleccionar todas
+            </button>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={deleteSelectedTasks}
+              disabled={selectedTasks.size === 0}
+              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium"
+            >
+              Eliminar seleccionadas
+            </button>
+            <button
+              onClick={toggleMultiSelectMode}
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 text-sm font-medium"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Renderizado principal del componente con la lista de tareas
+  if (isGroupedView) {
+    // Vista agrupada: organizar tareas por grupos
+    const tasksByGroup = new Map<string, Task[]>();
+    const tasksWithoutGroup: Task[] = [];
+
+    // Clasificar tareas por grupo
+    topLevelTasks.forEach(task => {
+      if (task.groupId && task.group) {
+        if (!tasksByGroup.has(task.groupId)) {
+          tasksByGroup.set(task.groupId, []);
+        }
+        tasksByGroup.get(task.groupId)!.push(task);
+      } else {
+        tasksWithoutGroup.push(task);
+      }
+    });
+
+    return (
+      <div>
+        {/* Barra de acciones para selección múltiple */}
+        {renderMultiSelectBar()}
+        
+        <div className="space-y-6">
+          {/* Renderizar grupos con tareas */}
+          {Array.from(tasksByGroup.entries()).map(([groupId, groupTasks]) => {
+            const group = groupTasks[0].group!;
+            return (
+              <div key={groupId} className="border border-gray-200 rounded-lg overflow-hidden">
+                {/* Encabezado del grupo */}
+                <div 
+                  className="px-4 py-3 border-b border-gray-200" 
+                  style={{ backgroundColor: `${group.color}15`, borderLeftColor: group.color, borderLeftWidth: '4px' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">{group.name}</h3>
+                      {group.description && (
+                        <p className="text-sm text-gray-600 mt-1">{group.description}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span 
+                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
+                        style={{ backgroundColor: group.color }}
+                      >
+                        {groupTasks.length} {groupTasks.length === 1 ? 'tarea' : 'tareas'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {/* Tareas del grupo */}
+                <div className="p-4 space-y-4">
+                  {groupTasks.map(task => renderTask(task))}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Tareas sin grupo */}
+          {tasksWithoutGroup.length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Sin grupo</h3>
+                    <p className="text-sm text-gray-600 mt-1">Tareas que no pertenecen a ningún grupo</p>
+                  </div>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800">
+                    {tasksWithoutGroup.length} {tasksWithoutGroup.length === 1 ? 'tarea' : 'tareas'}
+                  </span>
+                </div>
+              </div>
+              <div className="p-4 space-y-4">
+                {tasksWithoutGroup.map(task => renderTask(task))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Vista normal: lista simple de tareas
   return (
-    <div className="space-y-4">
-      {/* Renderizar cada tarea de nivel superior (las subtareas se renderizan recursivamente) */}
-      {topLevelTasks.map(task => renderTask(task))}
+    <div>
+      {/* Barra de acciones para selección múltiple */}
+      {renderMultiSelectBar()}
+      
+      <div className="space-y-4">
+        {/* Renderizar cada tarea de nivel superior (las subtareas se renderizan recursivamente) */}
+        {topLevelTasks.map(task => renderTask(task))}
+      </div>
     </div>
   );
+
 };
 
 export default TaskList;

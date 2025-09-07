@@ -1,7 +1,7 @@
 // Importaciones necesarias para React y manejo de estado
 import React, { useState } from 'react';
 // Iconos de Lucide React para la interfaz de usuario
-import { AlertCircle, Tag as TagIcon } from 'lucide-react';
+import { AlertCircle, Tag as TagIcon, Copy } from 'lucide-react';
 // Tipos TypeScript para definir la estructura de datos
 import { Tag, Priority } from '../types/task';
 // Componente personalizado para selección de rangos de fechas y utilidades de formateo
@@ -9,6 +9,8 @@ import { DateRangePicker, formatDateToISO } from './DateRangePicker';
 // Sistema de detección y resolución de conflictos de fechas
 import DateConflictModal from './DateConflictModal';
 import { validateDateConflict, createParentUpdateData, type SubtaskData } from '../utils/dateConflictUtils';
+// Componente para seleccionar tareas a copiar
+import TaskSelector from './TaskSelector';
 
 /**
  * Interfaz simplificada para representar una tarea padre
@@ -19,6 +21,9 @@ interface Task {
   title: string;        // Título de la tarea
   startDate?: string;   // Fecha de inicio opcional (ISO string)
   dueDate?: string;     // Fecha de vencimiento opcional (ISO string)
+  priority: Priority;   // Prioridad de la tarea
+  tags: { tag: Tag }[]; // Etiquetas asociadas
+  parentId?: string;    // ID de la tarea padre (para subtareas)
 }
 
 /**
@@ -97,6 +102,9 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
   const [conflictDetails, setConflictDetails] = useState<any>(null);             // Detalles específicos del conflicto detectado
   const [pendingSubtaskData, setPendingSubtaskData] = useState<any>(null);       // Datos de la subtarea pendiente de guardar
   const [isProcessingConflict, setIsProcessingConflict] = useState(false);       // Estado de carga durante resolución de conflictos
+  
+  // Estado para el selector de tareas para copiar
+  const [showTaskSelector, setShowTaskSelector] = useState(false);
 
   /**
    * Maneja la confirmación de mantener las fechas de la subtarea cuando hay conflictos
@@ -118,15 +126,15 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
       // Primero actualizar la tarea padre si es necesario
       if ((conflictDetails.suggestedParentStartDate || conflictDetails.suggestedParentEndDate) && onParentTaskUpdate) {
         const parentUpdateData = createParentUpdateData(
-          parentTask,
+          adaptParentTask(parentTask),
           conflictDetails.suggestedParentStartDate,
           conflictDetails.suggestedParentEndDate
         );
         
         // Usar el callback para actualizar la tarea padre a través del manejo de estado apropiado
         await onParentTaskUpdate(parentId, {
-          startDate: parentUpdateData.startDate,
-          dueDate: parentUpdateData.dueDate
+          startDate: parentUpdateData.startDate || undefined,
+          dueDate: parentUpdateData.dueDate || undefined
         });
       }
       
@@ -168,6 +176,39 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
     // Nota: No llamar onCancel() aquí para mantener el formulario abierto
   };
 
+  /**
+   * Función helper para adaptar parentTask al formato de Prisma
+   */
+  const adaptParentTask = (task: Task) => ({
+    id: task.id,
+    title: task.title,
+    description: null,
+    completed: false,
+    priority: task.priority,
+    dueDate: task.dueDate ? new Date(task.dueDate) : null,
+    startDate: task.startDate ? new Date(task.startDate) : null,
+    parentId: task.parentId || null,
+    groupId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    estimatedHours: null
+  });
+
+  /**
+   * Función para copiar datos de otra subtarea
+   * Copia todos los aspectos excepto título y descripción
+   */
+  const handleCopyFromSubtask = (selectedTask: Task) => {
+    setFormData({
+      ...formData,
+      priority: selectedTask.priority,
+      tagIds: selectedTask.tags.map(t => t.tag.id),
+      startDate: selectedTask.startDate ? new Date(selectedTask.startDate) : null,
+      dueDate: selectedTask.dueDate ? new Date(selectedTask.dueDate) : null
+    });
+    setShowTaskSelector(false);
+  };
+
 
 
   /**
@@ -188,45 +229,90 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
   };
 
   /**
-   * Valida todos los campos del formulario antes del envío
+   * Función de sanitización de texto para prevenir inyección de código
+   * Remueve caracteres peligrosos y normaliza espacios
    * 
-   * Validaciones implementadas:
-   * - Título requerido (no puede estar vacío)
-   * - Rango de fechas válido (inicio no puede ser después del fin)
-   * - Fechas no pueden estar en el pasado
+   * @param text - Texto a sanitizar
+   * @returns Texto sanitizado
+   */
+  const sanitizeText = (text: string): string => {
+    return text
+      .replace(/<script[^>]*>.*?<\/script>/gi, '') // Remover scripts
+      .replace(/<[^>]*>/g, '') // Remover HTML tags
+      .replace(/javascript:/gi, '') // Remover javascript: URLs
+      .replace(/on\w+\s*=/gi, '') // Remover event handlers
+      .trim();
+  };
+
+  /**
+   * Función de validación del formulario mejorada
    * 
-   * @returns true si el formulario es válido, false en caso contrario
+   * Valida todos los campos del formulario según las reglas de negocio:
+   * - Título: requerido, mínimo 3 caracteres, máximo 200 caracteres, sin caracteres especiales peligrosos
+   * - Descripción: opcional, máximo 1000 caracteres, sanitizada
+   * - Fechas: coherencia del rango, no pueden estar en el pasado, no más de 5 años en el futuro
+   * - Prioridad: debe ser un valor válido
+   * - Etiquetas: validación de existencia
+   * 
+   * @returns boolean - true si el formulario es válido, false en caso contrario
    */
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    // Validar que el título no esté vacío
-    if (!formData.title.trim()) {
-      newErrors.title = 'Title is required';
+    // Validar título
+    const titleTrimmed = formData.title.trim();
+    if (!titleTrimmed) {
+      newErrors.title = 'Subtask title is required';
+    } else if (titleTrimmed.length < 3) {
+      newErrors.title = 'Subtask title must be at least 3 characters long';
+    } else if (titleTrimmed.length > 200) {
+      newErrors.title = 'Subtask title must be less than 200 characters';
     }
 
-    // Validar rango de fechas
+    // Validar descripción
+    if (formData.description) {
+      const descTrimmed = formData.description.trim();
+      if (descTrimmed.length > 1000) {
+        newErrors.description = 'Description must be less than 1000 characters';
+      }
+    }
+
+    // Validar prioridad
+    const validPriorities = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+    if (!validPriorities.includes(formData.priority)) {
+      newErrors.priority = 'Please select a valid priority level';
+    }
+
+    // Validar etiquetas seleccionadas
+    if (formData.tagIds.length > 0) {
+      const availableTagIds = availableTags.map(tag => tag.id);
+      const invalidTags = formData.tagIds.filter(tagId => !availableTagIds.includes(tagId));
+      if (invalidTags.length > 0) {
+        newErrors.tags = 'Some selected tags are no longer available. Please refresh and try again';
+      }
+    }
+
+    // Validar coherencia del rango de fechas
     if (formData.startDate && formData.dueDate) {
       if (formData.startDate > formData.dueDate) {
         newErrors.dateRange = 'Start date cannot be after end date';
       }
     }
     
-    // Validaciones de fechas - crear fecha actual usando componentes individuales para evitar problemas de zona horaria
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
-    // Validar que la fecha de inicio no esté en el pasado
+    // Validar que las fechas no sean más de 5 años en el futuro
     if (formData.startDate) {
-      if (formData.startDate < today) {
-        newErrors.dateRange = 'Start date cannot be in the past';
+      const fiveYearsFromNow = new Date();
+      fiveYearsFromNow.setFullYear(fiveYearsFromNow.getFullYear() + 5);
+      if (formData.startDate > fiveYearsFromNow) {
+        newErrors.dateRange = 'Start date cannot be more than 5 years in the future';
       }
     }
     
-    // Validar que la fecha de vencimiento no esté en el pasado
     if (formData.dueDate) {
-      if (formData.dueDate < today) {
-        newErrors.dateRange = 'End date cannot be in the past';
+      const fiveYearsFromNow = new Date();
+      fiveYearsFromNow.setFullYear(fiveYearsFromNow.getFullYear() + 5);
+      if (formData.dueDate > fiveYearsFromNow) {
+        newErrors.dateRange = 'Due date cannot be more than 5 years in the future';
       }
     }
 
@@ -298,7 +384,7 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
       endDate: submitData.dueDate
     };
     
-    const conflictResult = validateDateConflict(subtaskData, parentTask);
+    const conflictResult = validateDateConflict(subtaskData, adaptParentTask(parentTask));
     
     // Si hay conflictos, mostrar modal de resolución
     if (conflictResult.hasConflict) {
@@ -502,25 +588,38 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
         )}
 
         {/* Botones de acción del formulario */}
-        <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
-          {/* Botón de cancelar - cierra el formulario sin guardar */}
+        <div className="flex justify-between items-center pt-4 border-t border-gray-200">
+          {/* Botón de copiar de otra subtarea */}
           <button
-            type="button"  // No envía el formulario
-            onClick={onCancel}  // Ejecutar callback de cancelación
-            disabled={isLoading}  // Deshabilitar durante carga
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            type="button"
+            onClick={() => setShowTaskSelector(true)}
+            disabled={isLoading}
+            className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            Cancel
+            <Copy className="w-4 h-4 mr-1" />
+            Copy from Subtask
           </button>
-          {/* Botón de crear subtarea - envía el formulario */}
-          <button
-            type="submit"  // Envía el formulario y ejecuta handleSubmit
-            disabled={isLoading}  // Deshabilitar durante carga
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {/* Texto dinámico según el estado de carga */}
-            {isLoading ? 'Creating...' : 'Create Subtask'}
-          </button>
+          
+          <div className="flex space-x-3">
+            {/* Botón de cancelar - cierra el formulario sin guardar */}
+            <button
+              type="button"  // No envía el formulario
+              onClick={onCancel}  // Ejecutar callback de cancelación
+              disabled={isLoading}  // Deshabilitar durante carga
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Cancel
+            </button>
+            {/* Botón de crear subtarea - envía el formulario */}
+            <button
+              type="submit"  // Envía el formulario y ejecuta handleSubmit
+              disabled={isLoading}  // Deshabilitar durante carga
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {/* Texto dinámico según el estado de carga */}
+              {isLoading ? 'Creating...' : 'Create Subtask'}
+            </button>
+          </div>
         </div>
       </form>
 
@@ -530,7 +629,7 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
         subtask={pendingSubtaskData ? {  // Datos de la subtarea pendiente de guardar
           title: pendingSubtaskData.title,
           startDate: pendingSubtaskData.startDate,
-          endDate: pendingSubtaskData.dueDate
+          dueDate: pendingSubtaskData.dueDate
         } : undefined}
         parentTask={parentTask}  // Información de la tarea padre
         conflictDetails={conflictDetails}  // Detalles específicos del conflicto detectado
@@ -538,6 +637,16 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
         onCancel={handleCancelConflict}  // Cancelar y mantener el formulario abierto
         isLoading={isProcessingConflict}  // Estado de carga durante la resolución
       />
+      
+      {/* Selector de tareas para copiar */}
+      {showTaskSelector && (
+        <TaskSelector
+          mode="subtask"
+          onSelect={handleCopyFromSubtask}
+          onCancel={() => setShowTaskSelector(false)}
+          parentTaskId={parentId}
+        />
+      )}
     </div>
   );
 };

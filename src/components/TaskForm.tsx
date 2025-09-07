@@ -1,13 +1,20 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Tag as TagIcon, AlertCircle } from 'lucide-react';
+import { X, Tag as TagIcon, AlertCircle, Users } from 'lucide-react';
 import { DateRangePicker } from './DateRangePicker';
 
 // TypeScript interfaces
 interface Tag {
   id: string;
   name: string;
+  color: string;
+}
+
+interface TaskGroup {
+  id: string;
+  name: string;
+  description?: string;
   color: string;
 }
 
@@ -20,20 +27,23 @@ interface Task {
   startDate?: string;
   dueDate?: string;
   parentId?: string;
+  groupId?: string;
   createdAt: string;
   updatedAt: string;
   tags: { tag: Tag }[];
   subtasks: Task[];
   parent?: Task;
+  group?: TaskGroup;
 }
 
 interface TaskFormProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (taskData: Partial<Task> & { tagIds: string[] }) => void;
+  onSubmit: (taskData: Partial<Task> & { tagIds: string[]; groupId?: string }) => void;
   task?: Task | null;
   parentTask?: Task | null;
   availableTags: Tag[];
+  availableGroups: TaskGroup[];
   isLoading?: boolean;
 }
 
@@ -44,6 +54,7 @@ const TaskForm: React.FC<TaskFormProps> = ({
   task,
   parentTask,
   availableTags,
+  availableGroups,
   isLoading = false
 }) => {
   const [formData, setFormData] = useState({
@@ -52,7 +63,8 @@ const TaskForm: React.FC<TaskFormProps> = ({
     priority: 'MEDIUM' as 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT',
     startDate: null as Date | null,
     dueDate: null as Date | null,
-    tagIds: [] as string[]
+    tagIds: [] as string[],
+    groupId: '' as string
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -73,7 +85,8 @@ const TaskForm: React.FC<TaskFormProps> = ({
         priority: task.priority,
         startDate: task.startDate ? new Date(task.startDate) : null,
         dueDate: task.dueDate ? new Date(task.dueDate) : null,
-        tagIds: task.tags.map(t => t.tag.id)
+        tagIds: task.tags.map(t => t.tag.id),
+        groupId: task.groupId || ''
       });
     } else if (isOpen && !task) {
       // Only reset non-date fields when opening form for new task
@@ -82,7 +95,8 @@ const TaskForm: React.FC<TaskFormProps> = ({
         title: '',
         description: '',
         priority: 'MEDIUM',
-        tagIds: []
+        tagIds: [],
+        groupId: ''
         // Preserve startDate and dueDate
       }));
     }
@@ -146,13 +160,14 @@ const TaskForm: React.FC<TaskFormProps> = ({
       startDate = new Date();
     }
     
-    const submitData: Partial<Task> & { tagIds: string[] } = {
+    const submitData: Partial<Task> & { tagIds: string[]; groupId?: string } = {
       title: formData.title.trim(),
       description: formData.description.trim() || undefined,
       priority: formData.priority,
       startDate: startDate instanceof Date ? startDate.toISOString().split('T')[0] : undefined,
       dueDate: formData.dueDate instanceof Date ? formData.dueDate.toISOString().split('T')[0] : undefined,
       tagIds: formData.tagIds,
+      groupId: formData.groupId || undefined,
       parentId: parentTask?.id
     };
 
@@ -289,6 +304,39 @@ const TaskForm: React.FC<TaskFormProps> = ({
             </select>
           </div>
 
+          {/* Group */}
+          {availableGroups.length > 0 && (
+            <div>
+              <label htmlFor="group" className="block text-sm font-medium text-gray-700 mb-1">
+                Group
+              </label>
+              <select
+                id="group"
+                value={formData.groupId}
+                onChange={(e) => handleInputChange('groupId', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                disabled={isLoading}
+              >
+                <option value="">No group</option>
+                {availableGroups.map(group => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+              {formData.groupId && (
+                <div className="mt-2 flex items-center text-sm text-gray-600">
+                  <div
+                    className="w-3 h-3 rounded-full mr-2 border border-gray-300"
+                    style={{ backgroundColor: availableGroups.find(g => g.id === formData.groupId)?.color }}
+                  />
+                  <Users className="w-4 h-4 mr-1" />
+                  <span>{availableGroups.find(g => g.id === formData.groupId)?.name}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Date Range */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -300,11 +348,10 @@ const TaskForm: React.FC<TaskFormProps> = ({
               onDateChange={(start, end) => {
                 setFormData({ ...formData, startDate: start, dueDate: end });
                 if (errors.dateRange) {
-                  setErrors({ ...errors, dateRange: '' });
-                }
-              }}
-              error={errors.dateRange}
-            />
+                setErrors({ ...errors, dateRange: '' });
+              }
+            }}
+          />
             {errors.dateRange && (
               <p className="mt-1 text-sm text-red-600 flex items-center">
                 <AlertCircle className="h-4 w-4 mr-1" />

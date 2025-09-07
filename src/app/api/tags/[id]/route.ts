@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // GET /api/tags/[id] - Get a specific tag with its tasks
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const { searchParams } = new URL(request.url);
     const includeTasks = searchParams.get('includeTasks') === 'true';
     
@@ -69,10 +67,10 @@ export async function GET(
 // PUT /api/tags/[id] - Update a specific tag
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await request.json();
     const { name, color } = body;
     
@@ -148,10 +146,10 @@ export async function PUT(
 // DELETE /api/tags/[id] - Delete a specific tag
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     
     // Check if tag exists and get associated tasks
     const existingTag = await prisma.tag.findUnique({

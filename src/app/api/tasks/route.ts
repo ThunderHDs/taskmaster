@@ -1,12 +1,9 @@
 // Importaciones necesarias para manejar requests HTTP en Next.js API Routes
 import { NextRequest, NextResponse } from 'next/server';
 // Cliente de Prisma para interactuar con la base de datos
-import { PrismaClient } from '@prisma/client';
-// DESHABILITADO: Sistema de detección de conflictos - descomentar para reactivar
+import { prisma } from '@/lib/prisma';
+// DESHABILITADO: Sistema de detección de conflictos - no se usará
 // import { detectConflictsForTask, saveDetectedConflicts } from '@/lib/conflictDetection';
-
-// Instancia global del cliente Prisma para operaciones de base de datos
-const prisma = new PrismaClient();
 
 /**
  * GET /api/tasks - Obtener todas las tareas con filtrado opcional
@@ -42,53 +39,72 @@ export async function GET(request: NextRequest) {
       where.parentId = parentId === 'null' ? null : parentId;
     }
     
-    // Consultar tareas con relaciones incluidas y ordenamiento específico
+    // Consulta completa con includes y ordenamiento
+    console.log('Starting tasks query...');
     const tasks = await prisma.task.findMany({
-      where,
+      where: {
+        ...where
+      },
       include: {
-        // Incluir etiquetas asociadas a la tarea
         tags: {
           include: {
-            tag: true  // Datos completos de cada etiqueta
+            tag: true
           }
         },
-        // Incluir subtareas con sus etiquetas
         subtasks: {
-          include: {
-            tags: {
-              include: {
-                tag: true  // Datos completos de etiquetas de subtareas
-              }
-            }
+          orderBy: {
+            createdAt: 'asc'
           }
         },
-        // Incluir información de la tarea padre (si existe)
         parent: true,
-        // Incluir las 5 actividades más recientes
-        activities: {
-          orderBy: {
-            createdAt: 'desc'  // Más recientes primero
-          },
-          take: 5  // Limitar a 5 actividades por rendimiento
-        }
+        group: true // Incluir información del grupo
       },
-      // Ordenamiento multi-nivel para organizar las tareas
       orderBy: [
-        { completed: 'asc' },    // Tareas pendientes primero
-        { priority: 'desc' },    // Prioridad alta primero
-        { dueDate: 'asc' },      // Fechas de vencimiento más cercanas primero
-        { createdAt: 'desc' }    // Más recientes primero como criterio final
+        {
+          priority: 'desc'
+        },
+        {
+          dueDate: 'asc'
+        },
+        {
+          createdAt: 'desc'
+        }
       ]
     });
+    console.log('Tasks query completed:', tasks.length);
     
     // Retornar las tareas encontradas en formato JSON
     return NextResponse.json(tasks);
   } catch (error) {
-    // Registrar error en consola para debugging
-    console.error('Error fetching tasks:', error);
-    // Retornar respuesta de error al cliente
+    // Registrar error completo en consola para debugging
+    console.error('Error fetching tasks:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Determinar tipo de error y respuesta apropiada
+    if (error instanceof Error) {
+      // Error de base de datos (Prisma)
+      if (error.message.includes('timeout') || error.message.includes('P1008')) {
+        return NextResponse.json(
+          { error: 'Database connection timeout. Please try again.' },
+          { status: 503 }
+        );
+      }
+      
+      // Error de validación de datos
+      if (error.message.includes('Invalid') || error.message.includes('validation')) {
+        return NextResponse.json(
+          { error: 'Invalid request parameters' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Error genérico del servidor
     return NextResponse.json(
-      { error: 'Failed to fetch tasks' },
+      { error: 'Internal server error. Please try again later.' },
       { status: 500 }
     );
   }
@@ -120,6 +136,7 @@ export async function POST(request: NextRequest) {
       startDate,                // Fecha de inicio opcional
       estimatedHours,           // Horas estimadas opcionales
       parentId,                 // ID de tarea padre opcional (para subtareas)
+      groupId,                  // ID del grupo opcional
       tagIds = []               // Array de IDs de etiquetas (vacío por defecto)
     } = body;
     
@@ -164,6 +181,7 @@ export async function POST(request: NextRequest) {
         startDate: startDate ? new Date(startDate) : null,   // Fecha de inicio convertida a Date
         estimatedHours: estimatedHours || null,               // Horas estimadas o null
         parentId: parentId || null,                          // ID de tarea padre o null
+        groupId: groupId || null,                            // ID del grupo o null
         // Crear relaciones con etiquetas usando los IDs proporcionados
         tags: {
           create: tagIds.map((tagId: string) => ({
@@ -181,7 +199,8 @@ export async function POST(request: NextRequest) {
           }
         },
         subtasks: true,  // Incluir subtareas (si las hay)
-        parent: true     // Incluir tarea padre (si existe)
+        parent: true,    // Incluir tarea padre (si existe)
+        group: true      // Incluir información del grupo
       }
     });
     
@@ -219,11 +238,51 @@ export async function POST(request: NextRequest) {
     // Retornar la tarea creada con código de estado 201 (Created)
     return NextResponse.json(task, { status: 201 });
   } catch (error) {
-    // Registrar error en consola para debugging
-    console.error('Error creating task:', error);
-    // Retornar respuesta de error al cliente
+    // Registrar error completo en consola para debugging
+    console.error('Error creating task:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Determinar tipo de error y respuesta apropiada
+    if (error instanceof Error) {
+      // Error de base de datos (Prisma)
+      if (error.message.includes('timeout') || error.message.includes('P1008')) {
+        return NextResponse.json(
+          { error: 'Database connection timeout. Please try again.' },
+          { status: 503 }
+        );
+      }
+      
+      // Error de constraint único (duplicados)
+      if (error.message.includes('Unique constraint') || error.message.includes('P2002')) {
+        return NextResponse.json(
+          { error: 'A task with similar properties already exists' },
+          { status: 409 }
+        );
+      }
+      
+      // Error de referencia (foreign key)
+      if (error.message.includes('Foreign key') || error.message.includes('P2003')) {
+        return NextResponse.json(
+          { error: 'Referenced parent task or tag does not exist' },
+          { status: 400 }
+        );
+      }
+      
+      // Error de validación de datos
+      if (error.message.includes('Invalid') || error.message.includes('validation')) {
+        return NextResponse.json(
+          { error: 'Invalid task data provided' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Error genérico del servidor
     return NextResponse.json(
-      { error: 'Failed to create task' },
+      { error: 'Internal server error. Please try again later.' },
       { status: 500 }
     );
   }

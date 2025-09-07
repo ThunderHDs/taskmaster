@@ -2,9 +2,8 @@
 
 // Importaciones necesarias para React y componentes de UI
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Tag as TagIcon, AlertCircle, Plus, X, Users, Copy } from 'lucide-react';
+import { Calendar, Tag as TagIcon, AlertCircle, Plus, X } from 'lucide-react';
 import { DateRangePicker, validateDate, formatDateToISO } from './DateRangePicker';
-import TaskSelector from './TaskSelector';
 
 /**
  * Interfaces de TypeScript para definir la estructura de datos
@@ -19,14 +18,6 @@ interface Tag {
   updatedAt: string; // Fecha de última actualización en formato ISO
 }
 
-// Definición de la interfaz TaskGroup para los grupos de tareas
-interface TaskGroup {
-  id: string;        // Identificador único del grupo
-  name: string;      // Nombre visible del grupo
-  description?: string; // Descripción opcional del grupo
-  color: string;     // Color del grupo en formato hexadecimal
-}
-
 // Definición de la interfaz Task para las tareas
 interface Task {
   id: string;                                                   // Identificador único de la tarea
@@ -37,20 +28,17 @@ interface Task {
   dueDate?: string;                                             // Fecha de vencimiento opcional
   startDate?: string;                                           // Fecha de inicio opcional
   parentId?: string;                                            // ID de tarea padre (para subtareas)
-  groupId?: string;                                             // ID del grupo al que pertenece
   createdAt: string;                                            // Fecha de creación
   updatedAt: string;                                            // Fecha de última actualización
   tags: { tag: Tag }[];                                         // Etiquetas asociadas
   subtasks: Task[];                                             // Lista de subtareas
   parent?: Task;                                                // Referencia a tarea padre
-  group?: TaskGroup;                                            // Referencia al grupo
 }
 
 // Props del componente InlineTaskForm
 interface InlineTaskFormProps {
-  onSubmit: (taskData: Partial<Task> & { tagIds: string[]; groupId?: string; copiedSubtasks?: Task[] }) => void; // Callback para enviar datos del formulario
+  onSubmit: (taskData: Partial<Task> & { tagIds: string[] }) => void; // Callback para enviar datos del formulario
   availableTags: Tag[];                                                // Lista de etiquetas disponibles para asignar
-  availableGroups: TaskGroup[];                                        // Lista de grupos disponibles para asignar
   isLoading?: boolean;                                                 // Estado de carga para deshabilitar el formulario
   className?: string;                                                  // Clases CSS adicionales
 }
@@ -71,24 +59,11 @@ interface InlineTaskFormProps {
 const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
   onSubmit,        // Función callback para enviar los datos del formulario
   availableTags,   // Lista de etiquetas disponibles para asignar
-  availableGroups, // Lista de grupos disponibles para asignar
   isLoading = false,  // Estado de carga para deshabilitar controles
   className = ''   // Clases CSS adicionales
 }) => {
   // Estado para controlar si el formulario está expandido o colapsado
   const [isExpanded, setIsExpanded] = useState(false);
-  
-  // Estado para el selector de tareas para copiar
-  const [showTaskSelector, setShowTaskSelector] = useState(false);
-  
-  // Estado para controlar si se han copiado datos de otra tarea
-  const [hasDataCopied, setHasDataCopied] = useState(false);
-  
-  // Estado para controlar si se deben copiar las subtareas (por defecto true)
-  const [shouldCopySubtasks, setShouldCopySubtasks] = useState(true);
-  
-  // Estado para almacenar las subtareas de la tarea copiada
-  const [copiedSubtasks, setCopiedSubtasks] = useState<Task[]>([]);
   
   // Estado principal del formulario con todos los campos de la tarea
   const [formData, setFormData] = useState({
@@ -97,8 +72,7 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
     priority: 'MEDIUM' as 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT', // Prioridad por defecto
     startDate: null as Date | null,                              // Fecha de inicio
     dueDate: null as Date | null,                                // Fecha de vencimiento
-    tagIds: [] as string[],                                       // IDs de etiquetas seleccionadas
-    groupId: '' as string                                         // ID del grupo seleccionado
+    tagIds: [] as string[]                                        // IDs de etiquetas seleccionadas
   });
   
   // Estado para manejar errores de validación del formulario
@@ -205,32 +179,6 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
   };
 
   /**
-   * Resetea completamente el formulario a sus valores iniciales
-   * 
-   * Limpia todos los campos, errores de validación y estados de copia.
-   * Esta función se usa después de crear una tarea exitosamente.
-   */
-  const resetForm = () => {
-    setFormData({
-      title: '',                          // Limpiar título
-      description: '',                    // Limpiar descripción
-      priority: 'MEDIUM',                 // Resetear prioridad a valor por defecto
-      startDate: null,                    // Limpiar fecha de inicio
-      dueDate: null,                      // Limpiar fecha de vencimiento
-      tagIds: [],                         // Limpiar etiquetas seleccionadas
-      groupId: ''                         // Limpiar grupo seleccionado
-    });
-    setErrors({});                        // Limpiar todos los errores de validación
-    setIsExpanded(false);                 // Colapsar formulario
-    
-    // Resetear estados de copia
-    setHasDataCopied(false);
-    setShouldCopySubtasks(true);
-    setCopiedSubtasks([]);
-    setShowTaskSelector(false);
-  };
-
-  /**
    * Manejador del envío del formulario
    * Valida los datos, aplica lógica de negocio y envía la tarea
    * Preserva las fechas entre creaciones para mejorar la experiencia del usuario
@@ -267,30 +215,33 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
     }
     
     // Preparar datos para envío con formato correcto
-    const submitData: Partial<Task> & { tagIds: string[]; groupId?: string; copiedSubtasks?: Task[] } = {
+    const submitData: Partial<Task> & { tagIds: string[] } = {
       title: formData.title.trim(),
       description: formData.description.trim() || undefined,
       priority: formData.priority,
       startDate: formatDateToISO(startDate) || undefined,
       dueDate: formatDateToISO(formData.dueDate) || undefined,
-      tagIds: formData.tagIds,
-      groupId: formData.groupId || undefined
+      tagIds: formData.tagIds
     };
-    
-    // Incluir subtareas copiadas si el usuario lo desea
-    if (hasDataCopied && shouldCopySubtasks && copiedSubtasks.length > 0) {
-      submitData.copiedSubtasks = copiedSubtasks;
-    }
 
     console.log('🔥 InlineTaskForm - submitData being sent:', submitData);
     
     // Enviar datos al componente padre
     onSubmit(submitData);
     
-    console.log('🔥 InlineTaskForm - Calling resetForm - cleaning all fields after successful creation');
-    // Reseteo completo: limpiar todos los campos después de crear la tarea exitosamente
-    // Esto evita que los datos de la tarea anterior permanezcan en el formulario
-    resetForm();
+    console.log('🔥 InlineTaskForm - NOT calling resetForm - preserving dates');
+    // Reseteo parcial: limpiar solo título y descripción pero preservar fechas
+    // Esto mejora la experiencia del usuario al crear múltiples tareas con fechas similares
+    setFormData(prev => ({
+      ...prev,
+      title: '',
+      description: '',
+      priority: 'MEDIUM',
+      tagIds: []
+      // Keep startDate and dueDate unchanged
+    }));
+    setIsExpanded(false); // Colapsar formulario
+    setErrors({}); // Limpiar errores
   };
 
   /**
@@ -362,50 +313,20 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
 
   /**
    * Manejador para cancelar la creación de tarea
-   * Limpia completamente el formulario y colapsa la vista
+   * Colapsa el formulario y limpia los campos excepto las fechas
+   * Preserva las fechas para facilitar la creación de múltiples tareas
    */
   const handleCancel = () => {
-    resetForm();
-  };
-
-  /**
-   * Función para manejar la copia de datos de otra tarea
-   */
-  const handleCopyFromTask = (task: Task) => {
-    console.log('🔥 DEBUG - handleCopyFromTask called with task:', {
-      taskId: task.id,
-      taskTitle: task.title,
-      subtasksCount: task.subtasks?.length || 0,
-      subtasks: task.subtasks
-    });
-    
-    setFormData({
-      title: task.title, // Se puede modificar después
-      description: task.description || '', // Se puede modificar después
-      priority: task.priority,
-      dueDate: task.dueDate ? new Date(task.dueDate) : null,
-      startDate: task.startDate ? new Date(task.startDate) : null,
-      tagIds: task.tags.map(t => t.tag.id),
-      groupId: task.groupId || ''
-    });
-    
-    // Almacenar las subtareas de la tarea copiada
-    const subtasksToStore = task.subtasks || [];
-    setCopiedSubtasks(subtasksToStore);
-    
-    // Marcar que se han copiado datos
-    setHasDataCopied(true);
-    
-    // Resetear el estado del checkbox a true (por defecto)
-    setShouldCopySubtasks(true);
-    
-    console.log('🔥 DEBUG - After setting states:', {
-      hasDataCopied: true,
-      copiedSubtasksCount: subtasksToStore.length,
-      shouldCopySubtasks: true
-    });
-    
-    setShowTaskSelector(false);
+    setFormData(prev => ({
+      ...prev,
+      title: '',
+      description: '',
+      priority: 'MEDIUM',
+      tagIds: []
+      // Preserve startDate and dueDate
+    }));
+    setIsExpanded(false);
+    setErrors({});
   };
 
   // Renderizado del componente
@@ -417,13 +338,13 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
          * Muestra solo un input simple que se expande al hacer clic o escribir
          * Diseño minimalista para no distraer de otras tareas
          */
-        <div className="p-2">
+        <div className="p-4">
           <input
             type="text"
             value={formData.title}
             onChange={(e) => handleCollapsedInputChange(e.target.value)}
             placeholder="Add a new task..."
-            className="w-full px-2 py-1.5 text-sm text-gray-700 border-0 focus:outline-none focus:ring-0 bg-transparent placeholder-gray-400"
+            className="w-full px-3 py-2 text-gray-700 border-0 focus:outline-none focus:ring-0 bg-transparent placeholder-gray-400"
             disabled={isLoading} // Deshabilitar durante operaciones de carga
           />
         </div>
@@ -533,44 +454,6 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
           </div>
 
           {/* 
-           * SELECTOR DE GRUPO
-           * Permite asignar la tarea a un grupo específico para mejor organización
-           * Solo se muestra si hay grupos disponibles en el sistema
-           */}
-          {availableGroups.length > 0 && (
-            <div>
-              <label htmlFor="inline-group" className="block text-sm font-medium text-gray-700 mb-1">
-                <Users className="w-4 h-4 inline mr-1" />
-                Group
-              </label>
-              <select
-                id="inline-group"
-                value={formData.groupId}
-                onChange={(e) => handleInputChange('groupId', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                disabled={isLoading}
-              >
-                <option value="">No group</option>
-                {availableGroups.map(group => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </select>
-              {/* Indicador visual del grupo seleccionado */}
-              {formData.groupId && (
-                <div className="mt-2 flex items-center text-sm text-gray-600">
-                  <div 
-                    className="w-3 h-3 rounded-full mr-2" 
-                    style={{ backgroundColor: availableGroups.find(g => g.id === formData.groupId)?.color }}
-                  ></div>
-                  {availableGroups.find(g => g.id === formData.groupId)?.name}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 
            * SELECTOR DE FECHAS
            * Componente personalizado para seleccionar rango de fechas
            * Incluye validación de coherencia entre fechas de inicio y vencimiento
@@ -664,84 +547,38 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
            * Botones para enviar o cancelar la creación de la tarea
            * Incluye estados de carga y validación
            */}
-          <div className="flex justify-between items-center pt-4 border-t border-gray-200">
-            <div className="flex flex-col space-y-2">
-              {/* Botón de copiar de otra tarea */}
-              <button
-                type="button"
-                onClick={() => setShowTaskSelector(true)}
-                disabled={isLoading}
-                className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <Copy className="w-4 h-4 mr-1" />
-                Copy from Task
-              </button>
-              
-              {/* Checkbox para copiar subtareas - solo visible después de copiar datos */}
-              {(() => {
-                console.log('🔥 DEBUG - Checkbox render check:', {
-                  hasDataCopied,
-                  copiedSubtasksLength: copiedSubtasks.length,
-                  shouldShow: hasDataCopied && copiedSubtasks.length > 0
-                });
-                return hasDataCopied && copiedSubtasks.length > 0;
-              })() && (
-                <label className="flex items-center space-x-2 text-sm text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={shouldCopySubtasks}
-                    onChange={(e) => setShouldCopySubtasks(e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>
-                    ✓ Copy {copiedSubtasks.length} subtask{copiedSubtasks.length !== 1 ? 's' : ''} too
-                  </span>
-                </label>
+          <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+            {/* Botón de cancelar */}
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={isLoading}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Cancel
+            </button>
+            {/* Botón de crear tarea */}
+            <button
+              type="submit"
+              disabled={isLoading || !formData.title.trim()} // Deshabilitar si está cargando o el título está vacío
+              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isLoading ? (
+                // Mostrar spinner durante la carga
+                <>
+                  <div className="animate-spin -ml-1 mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                  Creating...
+                </>
+              ) : (
+                // Mostrar icono y texto normal
+                <>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Create Task
+                </>
               )}
-            </div>
-            
-            <div className="flex space-x-3">
-              {/* Botón de cancelar */}
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={isLoading}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Cancel
-              </button>
-              {/* Botón de crear tarea */}
-              <button
-                type="submit"
-                disabled={isLoading || !formData.title.trim()} // Deshabilitar si está cargando o el título está vacío
-                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isLoading ? (
-                  // Mostrar spinner durante la carga
-                  <>
-                    <div className="animate-spin -ml-1 mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
-                    Creating...
-                  </>
-                ) : (
-                  // Mostrar icono y texto normal
-                  <>
-                    <Plus className="w-4 h-4 mr-1" />
-                    Create Task
-                  </>
-                )}
-              </button>
-            </div>
+            </button>
           </div>
         </form>
-      )}
-      
-      {/* Selector de tareas para copiar */}
-      {showTaskSelector && (
-        <TaskSelector
-          mode="task"
-          onSelect={handleCopyFromTask}
-          onCancel={() => setShowTaskSelector(false)}
-        />
       )}
     </div>
   );

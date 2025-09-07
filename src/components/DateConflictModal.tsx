@@ -4,9 +4,6 @@ import React from 'react';
 import { Button } from './ui/button';
 // Iconos de Lucide React para la interfaz visual del modal
 import { AlertTriangle, X, Calendar, Clock } from 'lucide-react';
-// Tipo Task de Prisma para tipado de la tarea padre
-import { Task } from '@prisma/client';
-
 /**
  * Propiedades del modal de resolución de conflictos de fechas
  * Este modal se muestra cuando una subtarea tiene fechas que entran en conflicto
@@ -15,11 +12,16 @@ import { Task } from '@prisma/client';
 interface DateConflictModalProps {
   isOpen: boolean;                    // Controla la visibilidad del modal
   subtask: {                          // Información de la subtarea que causa el conflicto
-    title: string;                    // Título de la subtarea
-    startDate?: string;               // Fecha de inicio de la subtarea (ISO string)
-    endDate?: string;                 // Fecha de fin de la subtarea (ISO string)
-  } | null;
-  parentTask: Task | null;            // Información completa de la tarea padre
+    title: string;                     // Título de la subtarea
+    startDate?: string;                // Fecha de inicio de la subtarea (opcional)
+    dueDate?: string;                  // Fecha de vencimiento de la subtarea (opcional)
+  } | null | undefined;
+  parentTask: {                       // Información de la tarea padre
+    id: string;                       // ID de la tarea padre
+    title: string;                    // Título de la tarea padre
+    startDate?: Date | string | null; // Fecha de inicio de la tarea padre
+    dueDate?: Date | string | null;   // Fecha de vencimiento de la tarea padre
+  } | null | undefined;
   conflictDetails: {                  // Detalles específicos del conflicto detectado
     message: string;                  // Mensaje descriptivo del conflicto
     suggestedParentStartDate?: string; // Nueva fecha de inicio sugerida para el padre
@@ -189,7 +191,7 @@ const DateConflictModal: React.FC<DateConflictModalProps> = ({
                     <p className="text-green-800 font-medium mb-2">"{subtask.title}"</p>
                     <div className="text-sm text-green-700">
                       {/* Fechas de la subtarea que generan el conflicto */}
-                      <p>Fecha: {formatDateRange(subtask.startDate, subtask.endDate)}</p>
+                      <p>Fecha: {formatDateRange(subtask.startDate, subtask.dueDate)}</p>
                     </div>
                   </div>
                 </div>

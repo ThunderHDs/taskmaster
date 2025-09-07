@@ -7,7 +7,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 // Task model - Core entity for task management
@@ -21,12 +21,16 @@ model Task {
   startDate       DateTime?
   estimatedHours  Int?
   parentId        String?
+  groupId         String?   // Optional group assignment
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   
   // Self-referential relationship for subtasks
   parent          Task?     @relation("TaskHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
   subtasks        Task[]    @relation("TaskHierarchy")
+  
+  // Group relationship
+  group           TaskGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   
   // Many-to-many relationship with tags
   tags            TaskTag[]
@@ -39,6 +43,21 @@ model Task {
   activities      ActivityLog[]
   
   @@map("tasks")
+}
+
+// TaskGroup model - For grouping tasks
+model TaskGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String   @default("#6366F1")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relationship with tasks
+  tasks       Task[]
+  
+  @@map("task_groups")
 }
 
 // Tag model - For categorizing tasks
@@ -83,12 +102,14 @@ model DateConflict {
   @@map("date_conflicts")
 }
 
-// Activity logging model for tracking changes
+// Activity logging model for tracking changes and comments
 model ActivityLog {
   id        String   @id @default(cuid())
   taskId    String
-  action    String
-  details   String?
+  action    String   // 'created', 'updated', 'completed', 'comment', 'subtask_added', 'subtask_updated', etc.
+  details   String?  // JSON string with change details
+  comment   String?  // User comment (for manual entries)
+  isUserComment Boolean @default(false) // Distinguishes user comments from system actions
   createdAt DateTime @default(now())
   
   // Relationship to task

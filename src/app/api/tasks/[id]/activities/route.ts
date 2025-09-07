@@ -1,9 +1,6 @@
 // IMPORTACIONES: Módulos necesarios para el manejo de solicitudes HTTP y base de datos
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-// CONFIGURACIÓN: Instancia del cliente Prisma para interactuar con la base de datos
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 /**
  * GET /api/tasks/[id]/activities - Obtener actividades de una tarea específica
@@ -23,10 +20,10 @@ const prisma = new PrismaClient();
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const { searchParams } = new URL(request.url);
     
     // PARÁMETROS DE CONSULTA: Extraer y validar parámetros de paginación
@@ -101,10 +98,10 @@ export async function GET(
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await request.json();
     const { action, details } = body;
     

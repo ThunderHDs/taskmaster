@@ -1,9 +1,6 @@
 // IMPORTACIONES: Módulos necesarios para el manejo de solicitudes HTTP y base de datos
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-// CONFIGURACIÓN: Instancia del cliente Prisma para interactuar con la base de datos
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 /**
  * GET /api/conflicts - Obtener conflictos de fechas existentes

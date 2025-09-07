@@ -1,12 +1,9 @@
 // Importaciones necesarias para manejar requests HTTP en Next.js API Routes
 import { NextRequest, NextResponse } from 'next/server';
 // Cliente de Prisma para interactuar con la base de datos
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 // DESHABILITADO: Sistema de detección de conflictos - descomentar para reactivar
 // import { detectConflictsForTask, saveDetectedConflicts } from '@/lib/conflictDetection';
-
-// Instancia global del cliente Prisma para operaciones de base de datos
-const prisma = new PrismaClient();
 
 /**
  * GET /api/tasks/[id] - Obtener una tarea específica por su ID
@@ -18,11 +15,11 @@ const prisma = new PrismaClient();
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Extraer el ID de la tarea desde los parámetros de la ruta
-    const { id } = params;
+    const { id } = await params;
     
     // Buscar la tarea específica con todas sus relaciones
     const task = await prisma.task.findUnique({
@@ -49,6 +46,8 @@ export async function GET(
         },
         // Incluir información de la tarea padre (si existe)
         parent: true,
+        // Incluir información del grupo al que pertenece la tarea
+        group: true,
         // Incluir todas las actividades ordenadas por fecha
         activities: {
           orderBy: {
@@ -103,13 +102,29 @@ export async function GET(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Extraer el ID de la tarea desde los parámetros de la ruta
-    const { id } = params;
-    // Parsear el cuerpo de la petición JSON
-    const body = await request.json();
+    const { id } = await params;
+    
+    // Parsear el cuerpo de la petición JSON con validación
+    let body;
+    try {
+      const text = await request.text();
+      if (!text || text.trim() === '') {
+        return NextResponse.json(
+          { error: 'Request body is empty' },
+          { status: 400 }
+        );
+      }
+      body = JSON.parse(text);
+    } catch (parseError) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
     
     // Extraer campos a actualizar del body
     const {
@@ -120,6 +135,7 @@ export async function PUT(
       dueDate,         // Nueva fecha de vencimiento (opcional)
       startDate,       // Nueva fecha de inicio (opcional)
       estimatedHours,  // Nuevas horas estimadas (opcional)
+      groupId,         // Nuevo ID del grupo (opcional)
       tagIds           // Nuevos IDs de etiquetas (opcional)
     } = body;
     
@@ -184,6 +200,7 @@ export async function PUT(
     if (description !== undefined) updateData.description = description?.trim() || null;
     if (completed !== undefined) updateData.completed = completed;
     if (priority !== undefined) updateData.priority = priority;
+    if (groupId !== undefined) updateData.groupId = groupId || null;
     
     // Handle dates with proper validation
     if (dueDate !== undefined) {
@@ -264,7 +281,9 @@ export async function PUT(
         // Incluir subtareas asociadas
         subtasks: true,
         // Incluir tarea padre si existe
-        parent: true
+        parent: true,
+        // Incluir información del grupo
+        group: true
       }
     });
     
@@ -285,11 +304,21 @@ export async function PUT(
     
     // Crear entrada en el log de actividades solo si hubo cambios
     if (changes.length > 0) {
+      // Detectar si la actualización es por resolución de conflictos de fechas
+      const isConflictResolution = (
+        (startDate !== undefined || dueDate !== undefined) &&
+        request.headers.get('x-conflict-resolution') === 'true'
+      );
+      
+      const activityDetails = isConflictResolution
+        ? `Tarea padre "${updatedTask.title}" actualizada automáticamente por conflicto de fechas detectado con subtarea: ${changes.join(', ')}`
+        : `Task "${updatedTask.title}" was updated: ${changes.join(', ')}`;
+      
       await prisma.activityLog.create({
         data: {
           taskId: id,
           action: 'UPDATED',
-          details: `Task "${updatedTask.title}" was updated: ${changes.join(', ')}`
+          details: activityDetails
         }
       });
     }
@@ -352,10 +381,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     
     // VERIFICACIÓN: Comprobar si la tarea existe antes de eliminarla
     const existingTask = await prisma.task.findUnique({

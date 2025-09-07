@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // GET /api/tags - Get all tags with optional task count
 export async function GET(request: NextRequest) {
@@ -49,9 +47,35 @@ export async function GET(request: NextRequest) {
     
     return NextResponse.json(transformedTags);
   } catch (error) {
-    console.error('Error fetching tags:', error);
+    // Registrar error completo en consola para debugging
+    console.error('Error fetching tags:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Determinar tipo de error y respuesta apropiada
+    if (error instanceof Error) {
+      // Error de timeout de base de datos
+      if (error.message.includes('timeout') || error.message.includes('P1008')) {
+        return NextResponse.json(
+          { error: 'Database connection timeout. Please try again.' },
+          { status: 503 }
+        );
+      }
+      
+      // Error de validación
+      if (error.message.includes('Invalid') || error.message.includes('validation')) {
+        return NextResponse.json(
+          { error: 'Invalid request parameters' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Error genérico del servidor
     return NextResponse.json(
-      { error: 'Failed to fetch tags' },
+      { error: 'Internal server error. Please try again later.' },
       { status: 500 }
     );
   }
@@ -102,9 +126,43 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json(tag, { status: 201 });
   } catch (error) {
-    console.error('Error creating tag:', error);
+    // Registrar error completo en consola para debugging
+    console.error('Error creating tag:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Determinar tipo de error y respuesta apropiada
+    if (error instanceof Error) {
+      // Error de timeout de base de datos
+      if (error.message.includes('timeout') || error.message.includes('P1008')) {
+        return NextResponse.json(
+          { error: 'Database connection timeout. Please try again.' },
+          { status: 503 }
+        );
+      }
+      
+      // Error de constraint único (nombre duplicado)
+      if (error.message.includes('Unique constraint') || error.message.includes('P2002')) {
+        return NextResponse.json(
+          { error: 'A tag with this name already exists' },
+          { status: 409 }
+        );
+      }
+      
+      // Error de validación de datos
+      if (error.message.includes('Invalid') || error.message.includes('validation')) {
+        return NextResponse.json(
+          { error: 'Invalid tag data provided' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Error genérico del servidor
     return NextResponse.json(
-      { error: 'Failed to create tag' },
+      { error: 'Internal server error. Please try again later.' },
       { status: 500 }
     );
   }

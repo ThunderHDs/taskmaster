@@ -9,6 +9,8 @@ interface DateRangePickerProps {
   onDateChange: (startDate: Date | null, endDate: Date | null) => void
   placeholder?: string
   className?: string
+  disabled?: boolean
+  error?: string
 }
 
 // Función de validación de fechas para compatibilidad con componentes existentes
@@ -101,7 +103,9 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   endDate,
   onDateChange,
   placeholder = 'Seleccionar fechas',
-  className = ''
+  className = '',
+  disabled = false,
+  error = ''
 }) => {
   const [isOpen, setIsOpen] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth())
@@ -113,8 +117,8 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
 
   // Sincronizar con props externas
   useEffect(() => {
-    setTempStartDate(startDate)
-    setTempEndDate(endDate)
+    setTempStartDate(startDate ?? null)
+    setTempEndDate(endDate ?? null)
   }, [startDate, endDate])
 
   // Detectar clicks fuera del componente

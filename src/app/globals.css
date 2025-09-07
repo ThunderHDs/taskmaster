@@ -10,3 +10,30 @@
     @apply bg-white text-gray-900;
   }
 }
+
+@layer utilities {
+  /* Animación suave para la barra de progreso de tareas */
+  @keyframes progressShimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    50% {
+      background-position: 0% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  
+  /* Animación de entrada suave para elementos de progreso */
+  @keyframes progressFadeIn {
+    0% {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+}

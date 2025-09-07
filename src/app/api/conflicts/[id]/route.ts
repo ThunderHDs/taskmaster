@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 // GET /api/conflicts/[id] - Obtener un conflicto específico
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     
     const conflict = await prisma.dateConflict.findUnique({
       where: { id },
@@ -57,10 +55,10 @@ export async function GET(
 // DELETE /api/conflicts/[id] - Eliminar un conflicto (cuando se resuelve)
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     
     // Verificar que el conflicto existe
     const existingConflict = await prisma.dateConflict.findUnique({
@@ -113,10 +111,10 @@ export async function DELETE(
 // PUT /api/conflicts/[id] - Actualizar severidad o mensaje de un conflicto
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await request.json();
     const { severity, message } = body;
     
