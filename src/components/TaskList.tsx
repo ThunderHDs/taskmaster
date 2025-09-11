@@ -878,7 +878,32 @@ const TaskList: React.FC<TaskListProps> = ({
    */
   const isOverdue = (dueDate: string, completed: boolean) => {
     if (completed) return false; // Las tareas completadas no pueden estar vencidas
-    return new Date(dueDate) < new Date(); // Comparar con la fecha actual
+    const today = new Date();
+    const due = new Date(dueDate);
+    
+    // Normalizar fechas para comparar solo el día (sin horas)
+    today.setHours(0, 0, 0, 0);
+    due.setHours(0, 0, 0, 0);
+    
+    return due < today; // Comparar con la fecha actual (solo día)
+  };
+
+  /**
+   * Verifica si una tarea está en su último día (due today)
+   * @param dueDate - Fecha límite de la tarea
+   * @param completed - Estado de completado de la tarea
+   * @returns true si la tarea vence hoy, false en caso contrario
+   */
+  const isLastDay = (dueDate: string, completed: boolean) => {
+    if (completed) return false; // Las tareas completadas no están en último día
+    const today = new Date();
+    const due = new Date(dueDate);
+    
+    // Normalizar fechas para comparar solo el día (sin horas)
+    today.setHours(0, 0, 0, 0);
+    due.setHours(0, 0, 0, 0);
+    
+    return due.getTime() === today.getTime(); // Comparar si es el mismo día
   };
 
   /**
@@ -930,6 +955,7 @@ const TaskList: React.FC<TaskListProps> = ({
     const hasSubtasks = task.subtasks && task.subtasks.length > 0; // Verificar si tiene subtareas
     const isExpanded = expandedTasks.has(task.id); // Verificar si está expandida
     const overdue = task.dueDate && isOverdue(task.dueDate, task.completed); // Verificar si está vencida
+    const lastDay = task.dueDate && isLastDay(task.dueDate, task.completed); // Verificar si es el último día
     const subtaskProgress = hasSubtasks ? calculateSubtaskProgress(task.subtasks) : 0; // Calcular progreso de subtareas
     const progressBarStyles = hasSubtasks ? getProgressBarStyles(subtaskProgress, task.id) : {}; // Estilos de barra de progreso
 
@@ -940,9 +966,9 @@ const TaskList: React.FC<TaskListProps> = ({
         <div 
           className={`bg-white rounded-lg border border-gray-200 p-4 mb-3 shadow-sm hover:shadow-md transition-all duration-300 ${
             task.completed ? 'opacity-75' : '' // Opacidad reducida para tareas completadas
-          } ${overdue ? 'border-red-300 bg-red-50' : ''} ${
+          } ${overdue ? 'border-red-300 bg-red-50' : lastDay ? 'border-orange-300 bg-orange-50' : ''} ${
             completingTasks.has(task.id) ? 'transform scale-105 bg-green-50 border-green-300 shadow-lg' : ''
-          }`} // Estilo especial para tareas vencidas y animación de completado
+          }`} // Estilo especial para tareas vencidas (rojo), último día (naranja) y animación de completado
           style={progressBarStyles} // Aplicar estilos de barra de progreso como fondo
           data-task-container
           onMouseEnter={() => handleTaskHoverEnter(task.id)} // Activar hover effect con delay
@@ -966,7 +992,7 @@ const TaskList: React.FC<TaskListProps> = ({
                     type="checkbox"
                     checked={selectedTasks.has(task.id)}
                     onChange={() => toggleTaskSelection(task.id)}
-                    className="w-4 h-4 text-blue-600 bg-blue-100 border-blue-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200"
+                    className="w-4 h-4 text-blue-600 bg-blue-100 border-blue-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200 cursor-pointer"
                   />
                 </div>
               )}
@@ -994,7 +1020,7 @@ const TaskList: React.FC<TaskListProps> = ({
                   disabled={isMultiSelectMode}
                   className={`w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200 ${
                     completingTasks.has(task.id) ? 'transform scale-110' : ''
-                  } ${isMultiSelectMode ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  } ${isMultiSelectMode ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 />
               </div>
 
@@ -1084,11 +1110,17 @@ const TaskList: React.FC<TaskListProps> = ({
                       )}
                   </div>
 
-                  {/* Indicador de tarea vencida */}
+                  {/* Indicador de tarea vencida o último día */}
                   {overdue && (
                     <div className="flex items-center text-red-600">
                       <AlertCircle className="w-4 h-4" />
                       <span className="text-xs ml-1">Overdue</span>
+                    </div>
+                  )}
+                  {lastDay && !overdue && (
+                    <div className="flex items-center text-orange-600">
+                      <Clock className="w-4 h-4" />
+                      <span className="text-xs ml-1">Último día</span>
                     </div>
                   )}
                 </div>
@@ -1112,7 +1144,7 @@ const TaskList: React.FC<TaskListProps> = ({
                 {(task.startDate || task.dueDate) && (
                   <div className="flex items-center space-x-1">
                     <Calendar className="w-3 h-3" />
-                    <span className={overdue ? 'text-red-600 font-medium' : ''}>
+                    <span className={overdue ? 'text-red-600 font-medium' : lastDay ? 'text-orange-600 font-medium' : ''}>
                       {formatDateRange(task.startDate, task.dueDate)}
                     </span>
                   </div>
@@ -1234,8 +1266,8 @@ const TaskList: React.FC<TaskListProps> = ({
             </div>
           )}
 
-          {/* Add Subtask Button - appears on hover with delay or click/tap */}
-          {(hoverDelayTask === task.id || clickedTasks.has(task.id)) && !creatingSubtasks.has(task.id) && (
+          {/* Add Subtask Button - limitado a máximo 2 niveles de anidación */}
+          {(hoverDelayTask === task.id || clickedTasks.has(task.id)) && !creatingSubtasks.has(task.id) && level < 2 && (
             <div className="mt-3 pt-2 border-t border-gray-100 animate-in fade-in duration-200">
               <button
                 onClick={(e) => {
@@ -1262,8 +1294,8 @@ const TaskList: React.FC<TaskListProps> = ({
           )}
         </div>
 
-        {/* Renderizado recursivo de subtareas cuando la tarea está expandida */}
-        {hasSubtasks && isExpanded && (
+        {/* Renderizado recursivo de subtareas cuando la tarea está expandida - máximo 2 niveles */}
+        {hasSubtasks && isExpanded && level <= 2 && (
           <div className="ml-4">
             {/* Mapear cada subtarea y renderizarla con nivel de anidación incrementado */}
             {task.subtasks && task.subtasks.map(subtask => renderTask(subtask, level + 1))}
@@ -1369,7 +1401,7 @@ const TaskList: React.FC<TaskListProps> = ({
           {Array.from(tasksByGroup.entries()).map(([groupId, groupTasks]) => {
             const group = groupTasks[0].group!;
             return (
-              <div key={groupId} className="border border-gray-200 rounded-lg overflow-hidden">
+              <div key={groupId} className="border border-gray-200 rounded-lg overflow-visible">
                 {/* Encabezado del grupo */}
                 <div 
                   className="px-4 py-3 border-b border-gray-200" 
@@ -1402,7 +1434,7 @@ const TaskList: React.FC<TaskListProps> = ({
 
           {/* Tareas sin grupo */}
           {tasksWithoutGroup.length > 0 && (
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="border border-gray-200 rounded-lg overflow-visible">
               <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
                 <div className="flex items-center justify-between">
                   <div>

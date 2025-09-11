@@ -17,10 +17,32 @@ const Calendar: React.FC<CalendarProps> = ({
   onDateSelect
 }) => {
   /**
-   * Función para formatear fecha a string YYYY-MM-DD
+   * Función para formatear fecha a string YYYY-MM-DD (corregida para evitar desfases)
    */
   const formatDateToString = (date: Date): string => {
-    return date.toISOString().split('T')[0];
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
+   * Función para formatear string de fecha de la DB a string local
+   */
+  const formatDateStringToLocal = (dateString: string): string => {
+    // Si ya está en formato YYYY-MM-DD, devolverla tal como está
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      return dateString;
+    }
+    
+    // Si tiene información de hora, extraer solo la parte de fecha
+    if (dateString.includes('T')) {
+      return dateString.split('T')[0];
+    }
+    
+    // Para otros casos, parsear y usar formateo local
+    const date = new Date(dateString);
+    return formatDateToString(date);
   };
 
 
@@ -37,8 +59,10 @@ const Calendar: React.FC<CalendarProps> = ({
       
       // Si la tarea tiene tanto startDate como dueDate, agregar todas las fechas en el rango
       if (task.startDate && task.dueDate) {
-        const startDate = new Date(task.startDate.split('T')[0]);
-        const endDate = new Date(task.dueDate.split('T')[0]);
+        const startDateStr = formatDateStringToLocal(task.startDate);
+        const endDateStr = formatDateStringToLocal(task.dueDate);
+        const startDate = new Date(startDateStr);
+        const endDate = new Date(endDateStr);
         
         const currentDate = new Date(startDate);
         while (currentDate <= endDate) {
@@ -48,11 +72,11 @@ const Calendar: React.FC<CalendarProps> = ({
       } else {
         // Agregar fecha de inicio si existe (sin dueDate)
         if (task.startDate) {
-          dates.add(task.startDate.split('T')[0]);
+          dates.add(formatDateStringToLocal(task.startDate));
         }
         // Agregar fecha de vencimiento si existe (sin startDate)
         if (task.dueDate) {
-          dates.add(task.dueDate.split('T')[0]);
+          dates.add(formatDateStringToLocal(task.dueDate));
         }
       }
     });
@@ -144,8 +168,8 @@ const Calendar: React.FC<CalendarProps> = ({
               // Excluir tareas que no tienen fechas establecidas
               if (!task.startDate && !task.dueDate) return false;
               
-              const taskStartDate = task.startDate?.split('T')[0];
-              const taskDueDate = task.dueDate?.split('T')[0];
+              const taskStartDate = task.startDate ? formatDateStringToLocal(task.startDate) : null;
+              const taskDueDate = task.dueDate ? formatDateStringToLocal(task.dueDate) : null;
               
               // Incluir tareas que inician en esta fecha
               const startsOnDate = taskStartDate === dateStr;

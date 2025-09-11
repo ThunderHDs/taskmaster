@@ -107,6 +107,9 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
   // Referencia al input del título para control de foco
   const titleInputRef = useRef<HTMLInputElement>(null);
   
+  // Referencia al input colapsado para control de foco
+  const collapsedInputRef = useRef<HTMLInputElement>(null);
+  
   // Referencia al contenedor del formulario para detectar clics externos
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -136,11 +139,15 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
 
   /**
    * Efecto para auto-colapsar el formulario cuando el título se vacía
-   * Proporciona una experiencia de usuario más fluida
+   * Proporciona una experiencia de usuario más fluida y mantiene el foco
    */
   useEffect(() => {
     if (isExpanded && !formData.title.trim()) {
       setIsExpanded(false);
+      // Mantener el foco en el input colapsado después del colapso
+      setTimeout(() => {
+        collapsedInputRef.current?.focus();
+      }, 100);
     }
   }, [formData.title, isExpanded]);
 
@@ -350,8 +357,12 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
         titleInputRef.current?.focus();
       }, 100);
     } else if (!value.trim() && isExpanded) {
-      // Colapsar si el título se vacía
+      // Colapsar si el título se vacía pero mantener el foco en el input colapsado
       setIsExpanded(false);
+      // Mantener el foco en el input colapsado después del colapso
+      setTimeout(() => {
+        collapsedInputRef.current?.focus();
+      }, 100);
     }
     
     // Limpiar error del título cuando el usuario comienza a escribir
@@ -419,6 +430,7 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
          */
         <div className="p-2">
           <input
+            ref={collapsedInputRef}
             type="text"
             value={formData.title}
             onChange={(e) => handleCollapsedInputChange(e.target.value)}
@@ -691,7 +703,7 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
                     type="checkbox"
                     checked={shouldCopySubtasks}
                     onChange={(e) => setShouldCopySubtasks(e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                   <span>
                     ✓ Copy {copiedSubtasks.length} subtask{copiedSubtasks.length !== 1 ? 's' : ''} too

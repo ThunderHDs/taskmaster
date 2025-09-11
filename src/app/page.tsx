@@ -96,7 +96,7 @@ const HomePage: React.FC = () => {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [priorityFilter, setPriorityFilter] = useState('all');
-  const [completedFilter, setCompletedFilter] = useState('all');
+  const [completedFilter, setCompletedFilter] = useState('pending');
   const [showFilters, setShowFilters] = useState(false);
 
   // Calendar states
@@ -536,21 +536,32 @@ const HomePage: React.FC = () => {
 
       const newSubtask = await response.json();
       
-      setTasks(prevTasks => 
-        prevTasks.map(task => {
-          if (task.id === parentId) {
-            const updatedTask = { ...task, subtasks: [...(task.subtasks || []), newSubtask] };
-            
-            // Lógica automática: si se agrega una subtarea a una tarea completada, descompletarla
-            if (task.completed) {
-              handleTaskToggle(parentId, false);
-            }
-            
-            return updatedTask;
+      // Función recursiva para actualizar subtareas anidadas
+      const updateTaskRecursively = (task: Task): Task => {
+        if (task.id === parentId) {
+          const updatedTask = { ...task, subtasks: [...(task.subtasks || []), newSubtask] };
+          
+          // Lógica automática: si se agrega una subtarea a una tarea completada, descompletarla
+          if (task.completed) {
+            handleTaskToggle(parentId, false);
           }
-          return task;
-        })
-      );
+          
+          return updatedTask;
+        }
+        
+        // Si la tarea tiene subtareas, buscar recursivamente
+        if (task.subtasks && task.subtasks.length > 0) {
+          const updatedSubtasks = task.subtasks.map(updateTaskRecursively);
+          // Solo actualizar si alguna subtarea cambió
+          if (updatedSubtasks.some((subtask, index) => subtask !== task.subtasks[index])) {
+            return { ...task, subtasks: updatedSubtasks };
+          }
+        }
+        
+        return task;
+      };
+      
+      setTasks(prevTasks => prevTasks.map(updateTaskRecursively));
     } catch (error) {
       console.error('Error creating subtask:', error);
       throw error;
@@ -859,6 +870,40 @@ const HomePage: React.FC = () => {
                 <Filter className="w-4 h-4" />
               </button>
               
+              {/* Status Filter - Triple Switch */}
+              <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setCompletedFilter('all')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                    completedFilter === 'all'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setCompletedFilter('pending')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                    completedFilter === 'pending'
+                      ? 'bg-orange-100 text-orange-800 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Pending
+                </button>
+                <button
+                  onClick={() => setCompletedFilter('completed')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                    completedFilter === 'completed'
+                      ? 'bg-green-100 text-green-800 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Done
+                </button>
+              </div>
+              
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
@@ -900,9 +945,7 @@ const HomePage: React.FC = () => {
                     day: 'numeric' 
                   })}
                 </h2>
-                <p className="text-gray-600">
-                  {filteredTasks.length} {filteredTasks.length === 1 ? 'tarea' : 'tareas'} programadas
-                </p>
+
               </div>
 
               {/* Add New Task */}
@@ -918,26 +961,10 @@ const HomePage: React.FC = () => {
               {/* Filters */}
               <div className={`mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4 ${showFilters ? 'block' : 'hidden'}`}>
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium text-gray-900">Filters</h3>
+                  <h3 className="text-sm font-medium text-gray-900">Advanced Filters</h3>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Status Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-2">
-                      Status
-                    </label>
-                    <select
-                      value={completedFilter}
-                      onChange={(e) => setCompletedFilter(e.target.value)}
-                      className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      <option value="all">All Tasks</option>
-                      <option value="pending">Pending</option>
-                      <option value="completed">Completed</option>
-                    </select>
-                  </div>
-
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Priority Filter */}
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-2">
@@ -975,7 +1002,7 @@ const HomePage: React.FC = () => {
                                   setSelectedTags(selectedTags.filter(id => id !== tag.id));
                                 }
                               }}
-                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
                             />
                             <div className="ml-2 flex items-center">
                               <div
@@ -1010,7 +1037,7 @@ const HomePage: React.FC = () => {
                                   setSelectedGroups(selectedGroups.filter(id => id !== group.id));
                                 }
                               }}
-                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
                             />
                             <div className="ml-2 flex items-center">
                               <div
@@ -1030,7 +1057,7 @@ const HomePage: React.FC = () => {
                 </div>
 
                 {/* Clear Filters */}
-                {(searchQuery || selectedTags.length > 0 || selectedGroups.length > 0 || priorityFilter !== 'all' || completedFilter !== 'all') && (
+                {(searchQuery || selectedTags.length > 0 || selectedGroups.length > 0 || priorityFilter !== 'all' || completedFilter !== 'pending') && (
                   <div className="mt-4">
                     <button
                       onClick={() => {
@@ -1038,7 +1065,7 @@ const HomePage: React.FC = () => {
                         setSelectedTags([]);
                         setSelectedGroups([]);
                         setPriorityFilter('all');
-                        setCompletedFilter('all');
+                        setCompletedFilter('pending');
                       }}
                       className="text-sm text-blue-600 hover:text-blue-800 py-2 px-4 border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
                     >
@@ -1074,12 +1101,18 @@ const HomePage: React.FC = () => {
               {/* Tareas sin fecha definida */}
               {(() => {
                 const tasksWithoutDate = tasks.filter(task => !task.dueDate && !task.startDate && !task.parentId);
-                return tasksWithoutDate.length > 0 && (
+                // Aplicar filtros de completadas para determinar si mostrar la sección
+                const filteredTasksWithoutDate = tasksWithoutDate.filter(task => {
+                  if (completedFilter === 'completed') return task.completed;
+                  if (completedFilter === 'pending') return !task.completed;
+                  return true; // 'all'
+                });
+                return filteredTasksWithoutDate.length > 0 && (
                   <div className="mt-6">
                     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                       <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                         <Clock className="w-5 h-5 mr-2 text-gray-500" />
-                        Tareas sin fecha definida ({tasksWithoutDate.length})
+                        Tareas sin fecha definida
                       </h3>
                       <TaskList
                         tasks={tasksWithoutDate}
@@ -1093,7 +1126,7 @@ const HomePage: React.FC = () => {
                         selectedTags={[]}
                         selectedGroups={[]}
                         priorityFilter="all"
-                        completedFilter="all"
+                        completedFilter={completedFilter}
                         isLoading={loading}
                         isGroupedView={isGroupedView}
                         onTaskStateUpdate={handleTaskStateUpdate}
@@ -1122,26 +1155,10 @@ const HomePage: React.FC = () => {
             {/* Filters */}
             <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 ${showFilters ? 'block' : 'hidden'}`}>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-medium text-gray-900">Filters</h3>
+                <h3 className="text-sm font-medium text-gray-900">Advanced Filters</h3>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {/* Status Filter */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">
-                    Status
-                  </label>
-                  <select
-                    value={completedFilter}
-                    onChange={(e) => setCompletedFilter(e.target.value)}
-                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="all">All Tasks</option>
-                    <option value="pending">Pending</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                </div>
-
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Priority Filter */}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-2">
@@ -1179,7 +1196,7 @@ const HomePage: React.FC = () => {
                                 setSelectedTags(selectedTags.filter(id => id !== tag.id));
                               }
                             }}
-                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
                           />
                           <div className="ml-2 flex items-center">
                             <div
@@ -1214,7 +1231,7 @@ const HomePage: React.FC = () => {
                                 setSelectedGroups(selectedGroups.filter(id => id !== group.id));
                               }
                             }}
-                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
                           />
                           <div className="ml-2 flex items-center">
                             <div
@@ -1234,7 +1251,7 @@ const HomePage: React.FC = () => {
               </div>
 
               {/* Clear Filters */}
-              {(searchQuery || selectedTags.length > 0 || selectedGroups.length > 0 || priorityFilter !== 'all' || completedFilter !== 'all') && (
+              {(searchQuery || selectedTags.length > 0 || selectedGroups.length > 0 || priorityFilter !== 'all' || completedFilter !== 'pending') && (
                 <div className="mt-4">
                   <button
                     onClick={() => {
@@ -1242,7 +1259,7 @@ const HomePage: React.FC = () => {
                       setSelectedTags([]);
                       setSelectedGroups([]);
                       setPriorityFilter('all');
-                      setCompletedFilter('all');
+                      setCompletedFilter('pending');
                     }}
                     className="text-sm text-blue-600 hover:text-blue-800 py-2 px-4 border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
                   >

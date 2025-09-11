@@ -38,9 +38,29 @@ const CalendarView: React.FC<CalendarViewProps> = ({
 }) => {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
-  // Función para formatear fecha a string
+  // Función para formatear fecha a string (corregida para evitar desfases de zona horaria)
   const formatDateToString = (date: Date): string => {
-    return date.toISOString().split('T')[0];
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Función para formatear string de fecha de la DB a string local
+  const formatDateStringToLocal = (dateString: string): string => {
+    // Si ya está en formato YYYY-MM-DD, devolverla tal como está
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      return dateString;
+    }
+    
+    // Si tiene información de hora, extraer solo la parte de fecha
+    if (dateString.includes('T')) {
+      return dateString.split('T')[0];
+    }
+    
+    // Para otros casos, parsear y usar formateo local
+    const date = new Date(dateString);
+    return formatDateToString(date);
   };
 
   // Función para verificar si una tarea está vencida
@@ -64,20 +84,20 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     }
   };
 
-  // Calcular fechas que tienen tareas
+  // Calcular fechas que tienen tareas (usando formateo corregido)
   const datesWithTasks = useMemo(() => {
     const dates = new Set<string>();
     tasks.forEach(task => {
       if (task.startDate) {
-        dates.add(formatDateToString(new Date(task.startDate)));
+        dates.add(formatDateStringToLocal(task.startDate));
       }
       if (task.dueDate) {
-        dates.add(formatDateToString(new Date(task.dueDate)));
+        dates.add(formatDateStringToLocal(task.dueDate));
       }
       if (task.progress && task.progress.length > 0) {
         task.progress.forEach(p => {
           if (p.date) {
-            dates.add(formatDateToString(new Date(p.date)));
+            dates.add(formatDateStringToLocal(p.date));
           }
         });
       }
@@ -85,7 +105,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
     return dates;
   }, [tasks]);
 
-  // Filtrar tareas para la fecha seleccionada
+  // Filtrar tareas para la fecha seleccionada (usando formateo corregido)
   const tasksForSelectedDate = useMemo(() => {
     const selectedDateStr = formatDateToString(selectedDate);
     return tasks
@@ -94,18 +114,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({
         if (task.parentId) return false;
         
         // Incluir tareas que empiezan en la fecha seleccionada
-        if (task.startDate && formatDateToString(new Date(task.startDate)) === selectedDateStr) {
+        if (task.startDate && formatDateStringToLocal(task.startDate) === selectedDateStr) {
           return true;
         }
         
         // Incluir tareas que vencen en la fecha seleccionada
-        if (task.dueDate && formatDateToString(new Date(task.dueDate)) === selectedDateStr) {
+        if (task.dueDate && formatDateStringToLocal(task.dueDate) === selectedDateStr) {
           return true;
         }
         
         // Incluir tareas con progreso en la fecha seleccionada
         if (task.progress && task.progress.some(p => 
-          p.date && formatDateToString(new Date(p.date)) === selectedDateStr
+          p.date && formatDateStringToLocal(p.date) === selectedDateStr
         )) {
           return true;
         }
@@ -479,7 +499,6 @@ const CalendarView: React.FC<CalendarViewProps> = ({
                 <div>
                   <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                     <CalendarIcon className="w-5 h-5 mr-2 text-blue-600" />
-                    Tareas programadas
                   </h4>
                   {isGroupedView ? (
                     <div className="space-y-6">
@@ -496,7 +515,7 @@ const CalendarView: React.FC<CalendarViewProps> = ({
                   <div className="bg-gray-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                     <Clock className="w-8 h-8 text-gray-400" />
                   </div>
-                  <h4 className="text-lg font-semibold text-gray-900 mb-2">Sin tareas programadas</h4>
+
                   <p className="text-gray-500">
                     No hay tareas para el {selectedDate.toLocaleDateString('es-ES')}.
                   </p>
