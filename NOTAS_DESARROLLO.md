@@ -41,6 +41,21 @@
      - Verificar si el problema afecta solo a tareas sin fecha
      - Comprobar consistencia de filtros entre diferentes vistas
 
+5. **Aviso de overdue se presenta prematuramente**
+   - **Descripción:** El aviso de overdue se está presentando cuando las tareas están en su fecha final, cuando debería aparecer una vez que la tarea sobrepasó la fecha límite
+   - **Comportamiento esperado:** El aviso de overdue debería mostrarse solo después de que la fecha límite haya pasado
+   - **Comportamiento actual:** El aviso aparece el mismo día de la fecha límite
+   - **Posible causa:** Esto puede deberse al salto de fecha que tiene el sistema, que tiene un día adelantado a lo que muestra
+   - **Impacto:** Confusión en la gestión de tiempos y fechas límite
+   - **Prioridad:** Media
+   - **Fecha identificada:** 2025-01-08
+   - **Área afectada:** Sistema de notificaciones, manejo de fechas
+   - **Investigación necesaria:**
+     - Revisar lógica de cálculo de fechas overdue
+     - Verificar configuración de zona horaria del sistema
+     - Comprobar si el desfase de fechas afecta otros componentes
+     - Evaluar la diferencia entre fecha del sistema y fecha mostrada al usuario
+
 ---
 
 ## Mejoras Propuestas
