@@ -287,6 +287,41 @@ export async function PUT(
       }
     });
     
+    // LÓGICA ESPECIAL PARA COMPLETAR TAREAS: Actualizar fecha final automáticamente
+    let completionTimeMessage = '';
+    if (completed !== undefined && completed !== existingTask.completed && completed === true) {
+      // Cuando se marca como completada, actualizar la fecha final a la fecha actual
+      const completionDate = new Date();
+      
+      // Actualizar la fecha final en la base de datos
+      await prisma.task.update({
+        where: { id },
+        data: { dueDate: completionDate }
+      });
+      
+      // Calcular diferencia de días si había una fecha prevista original
+      if (existingTask.dueDate) {
+        const originalDueDate = new Date(existingTask.dueDate);
+        const timeDifference = completionDate.getTime() - originalDueDate.getTime();
+        const daysDifference = Math.ceil(timeDifference / (1000 * 60 * 60 * 24));
+        
+        if (daysDifference < 0) {
+          // Completada antes de tiempo
+          const daysEarly = Math.abs(daysDifference);
+          completionTimeMessage = `Tarea completada ${daysEarly} día${daysEarly === 1 ? '' : 's'} antes de lo previsto inicialmente`;
+        } else if (daysDifference > 0) {
+          // Completada después de tiempo
+          completionTimeMessage = `Tarea completada ${daysDifference} día${daysDifference === 1 ? '' : 's'} después de lo previsto inicialmente`;
+        } else {
+          // Completada exactamente en la fecha prevista
+          completionTimeMessage = 'Tarea completada exactamente en la fecha prevista';
+        }
+      } else {
+        // No había fecha prevista
+        completionTimeMessage = 'Tarea completada (sin fecha límite previa)';
+      }
+    }
+
     // REGISTRO DE ACTIVIDADES: Crear log de los cambios realizados en la tarea
     const changes = [];
     // Detectar qué campos han cambiado comparando con los valores originales
@@ -310,14 +345,20 @@ export async function PUT(
         request.headers.get('x-conflict-resolution') === 'true'
       );
       
-      const activityDetails = isConflictResolution
-        ? `Tarea padre "${updatedTask.title}" actualizada automáticamente por conflicto de fechas detectado con subtarea: ${changes.join(', ')}`
-        : `Task "${updatedTask.title}" was updated: ${changes.join(', ')}`;
+      let activityDetails;
+      if (isConflictResolution) {
+        activityDetails = `Tarea padre "${updatedTask.title}" actualizada automáticamente por conflicto de fechas detectado con subtarea: ${changes.join(', ')}`;
+      } else if (completionTimeMessage) {
+        // Si hay mensaje de tiempo de completado, usarlo como detalle principal
+        activityDetails = completionTimeMessage;
+      } else {
+        activityDetails = `Task "${updatedTask.title}" was updated: ${changes.join(', ')}`;
+      }
       
       await prisma.activityLog.create({
         data: {
           taskId: id,
-          action: 'UPDATED',
+          action: completed === true ? 'COMPLETED' : 'UPDATED',
           details: activityDetails
         }
       });

@@ -76,17 +76,24 @@
 - **Fecha completado:** 2024-12-19
 - **Solución:** Se agregó `cursor-pointer` a todos los checkboxes interactivos en TaskList.tsx, página principal e InlineTaskForm.tsx
 
-### 4. Sistema de análisis de productividad
-- **Descripción:** Implementar la diferencia entre fechas finales estimadas y fechas reales de completado de tareas
-- **Objetivo:** Generar estadísticas del tiempo real invertido en cada tarea para análisis de productividad
+### ~~4. Sistema de análisis de productividad~~ ✅
+- ~~**Descripción:** Implementar la diferencia entre fechas finales estimadas y fechas reales de completado de tareas~~
+- ~~**Objetivo:** Generar estadísticas del tiempo real invertido en cada tarea para análisis de productividad~~
 - **Beneficio:** Permitir sugerencias e implementación de mejoras en productividad basadas en datos históricos
-- **Prioridad:** Media-Alta
+- **Prioridad:** ~~Media-Alta~~ **COMPLETADO**
 - **Fecha propuesta:** 2025-01-08
-- **Funcionalidades:**
-  - Registro de tiempo estimado vs tiempo real
-  - Dashboard de métricas de productividad
-  - Sugerencias automáticas de mejora
-  - Reportes de rendimiento por tipo de tarea
+- **Fecha completado:** 2025-01-13
+- **Estado:** ✅ **Completado**
+- **Implementación realizada:**
+  - ✅ Modificada la lógica de completado de tareas en `src/app/api/tasks/[id]/route.ts`
+  - ✅ Actualización automática de fecha final (`dueDate`) a la fecha actual cuando se marca como completada
+  - ✅ Cálculo automático de diferencia de días entre fecha prevista y fecha real
+  - ✅ Registro en historial de actividades (`ActivityLog`) con mensaje personalizado:
+    - "Completada X días antes de lo previsto" (cuando se completa antes)
+    - "Completada X días después de lo previsto" (cuando se completa tarde)
+    - "Completada en la fecha prevista" (cuando coincide)
+  - ✅ Cambio de acción en el historial a "COMPLETED" para mejor seguimiento
+  - ✅ Funcionalidad probada y verificada con tareas de prueba
 
 ### ~~5. Mantener foco en input de título de tarea~~ ✅
 - ~~**Descripción:** Cuando se borra todo el contenido del título de una tarea, el foco en el input se pierde porque el formulario expandido se cierra~~
