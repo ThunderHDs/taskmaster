@@ -54,6 +54,7 @@ interface InlineTaskFormProps {
   availableGroups: TaskGroup[];                                        // Lista de grupos disponibles para asignar
   isLoading?: boolean;                                                 // Estado de carga para deshabilitar el formulario
   className?: string;                                                  // Clases CSS adicionales
+  onBulkTaskClick?: () => void;                                        // Callback para abrir el formulario de tareas múltiples
 }
 
 /**
@@ -74,7 +75,8 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
   availableTags,   // Lista de etiquetas disponibles para asignar
   availableGroups, // Lista de grupos disponibles para asignar
   isLoading = false,  // Estado de carga para deshabilitar controles
-  className = ''   // Clases CSS adicionales
+  className = '',   // Clases CSS adicionales
+  onBulkTaskClick  // Callback para abrir el formulario de tareas múltiples
 }) => {
   // Estado para controlar si el formulario está expandido o colapsado
   const [isExpanded, setIsExpanded] = useState(false);
@@ -429,16 +431,28 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
          * Muestra solo un input simple que se expande al hacer clic o escribir
          * Diseño minimalista para no distraer de otras tareas
          */
-        <div className="p-2">
+        <div className="p-2 relative">
           <input
             ref={collapsedInputRef}
             type="text"
             value={formData.title}
             onChange={(e) => handleCollapsedInputChange(e.target.value)}
             placeholder="Add a new task..."
-            className="w-full px-2 py-1.5 text-sm text-gray-700 border-0 focus:outline-none focus:ring-0 bg-transparent placeholder-gray-400"
+            className="w-full px-2 py-1.5 pr-10 text-sm text-gray-700 border-0 focus:outline-none focus:ring-0 bg-transparent placeholder-gray-400"
             disabled={isLoading} // Deshabilitar durante operaciones de carga
           />
+          {/* Botón de múltiples integrado */}
+          {onBulkTaskClick && (
+            <button
+              type="button"
+              onClick={onBulkTaskClick}
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-blue-600 focus:outline-none focus:text-blue-600 transition-colors"
+              title="Crear múltiples tareas"
+              disabled={isLoading}
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          )}
         </div>
       ) : (
         /* 

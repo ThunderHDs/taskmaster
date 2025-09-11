@@ -2,11 +2,12 @@
 
 // Importaciones necesarias para React y componentes de UI
 import React, { useState, useEffect, useLayoutEffect } from 'react';
-import { ChevronDown, ChevronRight, Calendar, Tag, CheckSquare, AlertCircle, Plus, MoreVertical, Clock, History } from 'lucide-react';
+import { ChevronDown, ChevronRight, Calendar, Tag, CheckSquare, AlertCircle, Plus, MoreVertical, Clock, History, Edit3, Edit } from 'lucide-react';
 import { Priority } from '../types/task';
 import InlineTaskEditForm from './InlineTaskEditForm';
 import InlineSubtaskForm from './InlineSubtaskForm';
 import TaskHistory from './TaskHistory';
+import BulkEditModal from './BulkEditModal';
 
 /**
  * Interfaz que define la estructura de una etiqueta (tag)
@@ -81,6 +82,8 @@ interface TaskListProps {
   isGroupedView?: boolean;                       // Indica si se debe mostrar la vista agrupada
   onTaskStateUpdate?: (taskId: string, updatedTask: Task) => void; // Función para actualizar el estado local de una tarea
   onBulkDelete?: (taskIds: string[]) => void;    // Función para eliminar múltiples tareas
+  onBulkEdit?: (taskIds: string[], updates: any) => Promise<void>; // Función para editar múltiples tareas
+  onGlobalBulkEdit?: (selectedTasks: Task[]) => void; // Función para manejar edición masiva global
   onClearSelection?: (clearFn: () => void) => void; // Callback para recibir la función de limpiar selección
 }
 
@@ -106,6 +109,8 @@ const TaskList: React.FC<TaskListProps> = ({
   isGroupedView = false,   // Indica si se debe mostrar la vista agrupada
   onTaskStateUpdate,       // Callback para actualizar estado local de tarea
   onBulkDelete,            // Callback para eliminar múltiples tareas
+  onBulkEdit,              // Callback para editar múltiples tareas
+  onGlobalBulkEdit,        // Callback para edición masiva global
   onClearSelection         // Callback para limpiar selección múltiple
 }) => {
   // Estados para gestionar las interacciones de la interfaz de usuario
@@ -158,6 +163,9 @@ const TaskList: React.FC<TaskListProps> = ({
   /** Estado que controla si el modo de selección múltiple está activo */
   const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
   
+  /** Estado que controla si el modal de edición masiva está abierto */
+  const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState<boolean>(false);
+  
   /**
    * Función para limpiar la selección múltiple
    */
@@ -168,13 +176,16 @@ const TaskList: React.FC<TaskListProps> = ({
   
   /**
    * Exponer la función de limpiar selección al componente padre
-   * Usamos useEffect para evitar problemas de renderizado durante el ciclo de render
+   * Usamos useRef para evitar problemas de renderizado durante el ciclo de render
    */
+  const clearSelectionRef = React.useRef(clearSelection);
+  clearSelectionRef.current = clearSelection;
+  
   React.useEffect(() => {
     if (onClearSelection) {
-      onClearSelection(clearSelection);
+      onClearSelection(() => clearSelectionRef.current());
     }
-  }, [onClearSelection, clearSelection]);
+  }, [onClearSelection]);
 
   // Nota: El cierre automático del modo de selección múltiple se maneja
   // exclusivamente a través de la función clearSelection llamada desde el componente padre
@@ -536,6 +547,76 @@ const TaskList: React.FC<TaskListProps> = ({
     // para asegurar que la UI se actualice correctamente
     setSelectedTasks(new Set());
     setIsMultiSelectMode(false);
+  };
+
+  /**
+   * Función para abrir el modal de edición masiva
+   */
+  const openBulkEditModal = () => {
+    if (selectedTasks.size === 0) return;
+    
+    // Usar la función global si está disponible, sino usar el modal local
+    if (onGlobalBulkEdit) {
+      const selectedTasksData = getSelectedTasksData();
+      onGlobalBulkEdit(selectedTasksData);
+      // Limpiar selección después de abrir el modal global
+      setSelectedTasks(new Set());
+      setIsMultiSelectMode(false);
+    } else {
+      setIsBulkEditModalOpen(true);
+    }
+  };
+
+  /**
+   * Función para cerrar el modal de edición masiva
+   */
+  const closeBulkEditModal = () => {
+    setIsBulkEditModalOpen(false);
+    // También limpiar selección cuando se cierra el modal
+    setSelectedTasks(new Set());
+    setIsMultiSelectMode(false);
+  };
+
+  /**
+   * Función para manejar la edición masiva de tareas
+   */
+  const handleBulkEdit = async (updates: any) => {
+    if (!onBulkEdit || selectedTasks.size === 0) return;
+    
+    try {
+      const taskIds = Array.from(selectedTasks);
+      await onBulkEdit(taskIds, updates);
+      
+      // closeBulkEditModal se encarga de limpiar la selección cuando se cierre el modal
+    } catch (error) {
+      // Re-lanzar el error para que BulkEditModal lo maneje
+      throw error;
+    }
+  };
+
+  /**
+   * Función para obtener las tareas seleccionadas completas
+   */
+  const getSelectedTasksData = (): Task[] => {
+    const selectedTasksData: Task[] = [];
+    
+    const findTaskById = (tasks: Task[], id: string): Task | null => {
+      for (const task of tasks) {
+        if (task.id === id) return task;
+        if (task.subtasks) {
+          const found = findTaskById(task.subtasks, id);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    selectedTasks.forEach(taskId => {
+      const task = findTaskById(tasks, taskId);
+      if (task) selectedTasksData.push(task);
+    });
+    
+    return selectedTasksData;
   };
 
   /**
@@ -1408,6 +1489,14 @@ const TaskList: React.FC<TaskListProps> = ({
           </div>
           <div className="flex items-center space-x-2">
             <button
+              onClick={openBulkEditModal}
+              disabled={selectedTasks.size === 0}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium flex items-center space-x-2"
+            >
+              <Edit3 className="h-4 w-4" />
+              <span>Editar seleccionadas</span>
+            </button>
+            <button
               onClick={deleteSelectedTasks}
               disabled={selectedTasks.size === 0}
               className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium"
@@ -1468,6 +1557,30 @@ const TaskList: React.FC<TaskListProps> = ({
                       )}
                     </div>
                     <div className="flex items-center space-x-2">
+                      {/* Botón de edición masiva del grupo */}
+                      <button
+                        onClick={() => {
+                          // Seleccionar todas las tareas de nivel 0 del grupo
+                          const topLevelGroupTasks = groupTasks.filter(task => !task.parentId);
+                          
+                          // Usar la función global si está disponible, sino usar el modal local
+                          if (onGlobalBulkEdit) {
+                            onGlobalBulkEdit(topLevelGroupTasks);
+                          } else {
+                            const taskIds = topLevelGroupTasks.map(task => task.id);
+                            // Limpiar selección actual
+                            setSelectedTasks(new Set());
+                            // Seleccionar las tareas del grupo
+                            setSelectedTasks(new Set(taskIds));
+                            // Abrir modal de edición masiva local
+                            setIsBulkEditModalOpen(true);
+                          }
+                        }}
+                        className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                        title="Editar todas las tareas del grupo"
+                      >
+                        <Edit className="w-3 h-3" />
+                      </button>
                       <span 
                         className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
                         style={{ backgroundColor: group.color }}
@@ -1519,6 +1632,8 @@ const TaskList: React.FC<TaskListProps> = ({
         {/* Renderizar cada tarea de nivel superior (las subtareas se renderizan recursivamente) */}
         {topLevelTasks.map(task => renderTask(task))}
       </div>
+      
+      {/* Modal de edición masiva ahora se maneja globalmente */}
     </div>
   );
 

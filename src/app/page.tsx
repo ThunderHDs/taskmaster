@@ -1,15 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Filter, Tag as TagIcon, Search, Settings, RefreshCw, Calendar as CalendarIcon, Clock, Users, CheckSquare } from 'lucide-react';
 import Link from 'next/link';
 import TaskList from '@/components/TaskList';
 import TaskForm from '@/components/TaskForm';
+import BulkTaskForm from '@/components/BulkTaskForm';
 import TagManager from '@/components/TagManager';
 import GroupManager from '@/components/GroupManager';
 import InlineTaskForm from '@/components/InlineTaskForm';
 import DeleteConfirmationModal from '@/components/DeleteConfirmationModal';
 import BulkDeleteModal from '@/components/BulkDeleteModal';
+import BulkEditModal from '@/components/BulkEditModal';
 import CalendarView from '@/components/CalendarView';
 import CalendarHeader from '@/components/CalendarHeader';
 import Calendar from '@/components/Calendar';
@@ -90,7 +92,17 @@ const HomePage: React.FC = () => {
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
   const [clearSelectionFn, setClearSelectionFn] = useState<(() => void) | null>(null);
   
-
+  // Función memoizada para evitar re-renders innecesarios
+  const handleClearSelectionFn = useCallback((fn: () => void) => {
+    setClearSelectionFn(() => fn);
+  }, []);
+  
+  // Bulk task creation states
+  const [showBulkTaskForm, setShowBulkTaskForm] = useState(false);
+  
+  // Bulk edit modal states (global)
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
+  const [bulkEditTasks, setBulkEditTasks] = useState<Task[]>([]);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -143,6 +155,136 @@ const HomePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Bulk edit function
+  const handleBulkEdit = async (taskIds: string[], updates: any) => {
+    try {
+      console.log('handleBulkEdit called with:', { taskIds, updates });
+      
+      const requestBody = {
+        taskIds,
+        updates
+      };
+
+      
+      const response = await fetch('/api/tasks/bulk', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Error al actualizar las tareas');
+      }
+
+      const result = await response.json();
+
+      
+      // Actualizar las tareas en el estado local
+      setTasks(prevTasks => {
+        const updatedTasksMap = new Map(result.tasks.map((task: Task) => [task.id, task]));
+        
+        const updateTaskRecursively = (task: Task): Task => {
+          if (updatedTasksMap.has(task.id)) {
+            const updatedTask = updatedTasksMap.get(task.id)!;
+
+            return updatedTask;
+          }
+          
+          if (task.subtasks && task.subtasks.length > 0) {
+            return {
+              ...task,
+              subtasks: task.subtasks.map(updateTaskRecursively)
+            };
+          }
+          
+          return task;
+        };
+        
+        const newTasks = prevTasks.map(updateTaskRecursively);
+
+        return newTasks;
+      });
+      
+
+    } catch (error) {
+      console.error('Error updating tasks:', error);
+      setError(error instanceof Error ? error.message : 'Error al actualizar las tareas');
+      throw error;
+    }
+  };
+
+  // Bulk task creation function
+  const handleBulkTaskCreate = async (bulkData: {
+    titles: string[];
+    description?: string;
+    priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+    startDate?: string;
+    dueDate?: string;
+    tagIds: string[];
+    groupId?: string;
+    subtasks: string[];
+  }) => {
+    try {
+      const response = await fetch('/api/tasks/bulk', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(bulkData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Error al crear las tareas');
+      }
+
+      const result = await response.json();
+      
+      // Agregar las nuevas tareas al estado
+      setTasks(prevTasks => [...prevTasks, ...result.tasks]);
+      
+      // Cerrar el formulario
+      setShowBulkTaskForm(false);
+      
+      console.log(result.message);
+      return result;
+    } catch (error) {
+      console.error('Error creating bulk tasks:', error);
+      setError(error instanceof Error ? error.message : 'Error al crear las tareas');
+      throw error;
+    }
+  };
+
+  // Global bulk edit handlers
+  const handleGlobalBulkEdit = (selectedTasks: Task[]) => {
+    setBulkEditTasks(selectedTasks);
+    setShowBulkEditModal(true);
+  };
+
+  const handleBulkEditSave = async (updates: any) => {
+    try {
+      const taskIds = bulkEditTasks.map(task => task.id);
+      await handleBulkEdit(taskIds, updates);
+      setShowBulkEditModal(false);
+      setBulkEditTasks([]);
+      // Limpiar selección si existe
+      if (clearSelectionFn) {
+        clearSelectionFn();
+      }
+    } catch (error) {
+      console.error('Error in bulk edit:', error);
+      throw error;
+    }
+  };
+
+  const handleBulkEditClose = () => {
+    setShowBulkEditModal(false);
+    setBulkEditTasks([]);
   };
 
   // Task handlers
@@ -844,6 +986,8 @@ const HomePage: React.FC = () => {
 
               </div>
               
+
+              
               <button
                 onClick={() => setShowTagManager(true)}
                 className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
@@ -961,6 +1105,7 @@ const HomePage: React.FC = () => {
                   availableTags={tags}
                   availableGroups={groups}
                   isLoading={loading}
+                  onBulkTaskClick={() => setShowBulkTaskForm(true)}
                 />
               </div>
 
@@ -1084,23 +1229,25 @@ const HomePage: React.FC = () => {
               {/* Task List */}
               <div>
                 <TaskList
-                  tasks={filteredTasks}
-                  onTaskToggle={handleTaskToggle}
-                  onTaskEdit={handleTaskEdit}
-                  onTaskUpdate={handleTaskUpdate}
-                  onTaskDelete={handleTaskDelete}
-                  onSubtaskCreate={handleInlineSubtaskCreate}
-                  availableTags={tags}
-                  availableGroups={groups}
-                  selectedTags={selectedTags}
-                  selectedGroups={selectedGroups}
-                  priorityFilter={priorityFilter}
-                  completedFilter={completedFilter}
-                  isLoading={loading}
-                  isGroupedView={isGroupedView}
-                  onTaskStateUpdate={handleTaskStateUpdate}
-                  onBulkDelete={handleBulkDelete}
-                  onClearSelection={setClearSelectionFn}
+              tasks={filteredTasks}
+              onTaskToggle={handleTaskToggle}
+              onTaskEdit={handleTaskEdit}
+              onTaskUpdate={handleTaskUpdate}
+              onTaskDelete={handleTaskDelete}
+              onSubtaskCreate={handleInlineSubtaskCreate}
+              availableTags={tags}
+              availableGroups={groups}
+              selectedTags={selectedTags}
+              selectedGroups={selectedGroups}
+              priorityFilter={priorityFilter}
+              completedFilter={completedFilter}
+              isLoading={loading}
+              isGroupedView={isGroupedView}
+              onTaskStateUpdate={handleTaskStateUpdate}
+              onBulkDelete={handleBulkDelete}
+              onBulkEdit={handleBulkEdit}
+              onGlobalBulkEdit={handleGlobalBulkEdit}
+              onClearSelection={handleClearSelectionFn}
                 />
               </div>
 
@@ -1137,7 +1284,9 @@ const HomePage: React.FC = () => {
                         isGroupedView={isGroupedView}
                         onTaskStateUpdate={handleTaskStateUpdate}
                         onBulkDelete={handleBulkDelete}
-                        onClearSelection={setClearSelectionFn}
+                        onBulkEdit={handleBulkEdit}
+                        onGlobalBulkEdit={handleGlobalBulkEdit}
+                        onClearSelection={handleClearSelectionFn}
                       />
                     </div>
                   </div>
@@ -1155,6 +1304,7 @@ const HomePage: React.FC = () => {
                 availableTags={tags}
                 availableGroups={groups}
                 isLoading={loading}
+                onBulkTaskClick={() => setShowBulkTaskForm(true)}
               />
             </div>
 
@@ -1295,7 +1445,9 @@ const HomePage: React.FC = () => {
                   isGroupedView={isGroupedView}
                   onTaskStateUpdate={handleTaskStateUpdate}
                   onBulkDelete={handleBulkDelete}
-                  onClearSelection={setClearSelectionFn}
+                  onBulkEdit={handleBulkEdit}
+                  onGlobalBulkEdit={handleGlobalBulkEdit}
+                  onClearSelection={handleClearSelectionFn}
                 />
               </div>
               
@@ -1371,6 +1523,14 @@ const HomePage: React.FC = () => {
         isLoading={deleteLoading}
       />
 
+      <BulkTaskForm
+        isOpen={showBulkTaskForm}
+        onClose={() => setShowBulkTaskForm(false)}
+        onSubmit={handleBulkTaskCreate}
+        availableTags={tags}
+        availableGroups={groups}
+      />
+
       <BulkDeleteModal
         isOpen={showBulkDeleteModal}
         onCancel={cancelBulkDelete}
@@ -1390,6 +1550,15 @@ const HomePage: React.FC = () => {
         }}
         tasks={tasksToDelete}
         isLoading={bulkDeleteLoading}
+      />
+
+      <BulkEditModal
+        isOpen={showBulkEditModal}
+        onClose={handleBulkEditClose}
+        onSave={handleBulkEditSave}
+        selectedTasks={bulkEditTasks}
+        tags={tags}
+        groups={groups}
       />
     </div>
   );
