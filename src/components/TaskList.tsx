@@ -43,6 +43,7 @@ interface Task {
   priority: Priority; // Nivel de prioridad
   dueDate?: string;                              // Fecha límite (opcional)
   startDate?: string;                            // Fecha de inicio (opcional)
+  originalDueDate?: string;                      // Fecha límite original antes de completar temprano
   parentId?: string;                             // ID de la tarea padre (para subtareas)
   groupId?: string;                              // ID del grupo al que pertenece la tarea
   createdAt: string;                             // Fecha de creación
@@ -817,11 +818,14 @@ const TaskList: React.FC<TaskListProps> = ({
   /**
    * Formatea un rango de fechas para mostrar en la interfaz
    * Maneja diferentes casos: solo fecha de inicio, solo fecha límite, o ambas
+   * Muestra fecha original tachada si la tarea fue completada antes de tiempo
    * @param startDate - Fecha de inicio (opcional)
    * @param endDate - Fecha límite (opcional)
-   * @returns String formateado para mostrar o null si no hay fechas
+   * @param originalDueDate - Fecha límite original antes de completar (opcional)
+   * @param completed - Si la tarea está completada
+   * @returns JSX element formateado para mostrar o null si no hay fechas
    */
-  const formatDateRange = (startDate?: string, endDate?: string) => {
+  const formatDateRange = (startDate?: string, endDate?: string, originalDueDate?: string, completed?: boolean) => {
     if (!startDate && !endDate) return null;
     
     /**
@@ -839,6 +843,18 @@ const TaskList: React.FC<TaskListProps> = ({
     // Si solo existe fecha límite (due date)
     if (!startDate && endDate) {
       const { fullDate } = formatDateShort(endDate);
+      
+      // Si hay fecha original y es diferente, mostrar ambas
+      if (completed && originalDueDate && originalDueDate !== endDate) {
+        const originalFormatted = formatDateShort(originalDueDate);
+        return (
+          <span>
+            Due <span className="line-through text-gray-400">{originalFormatted.fullDate}</span>{' '}
+            <span className="text-green-600 font-medium">{fullDate}</span>
+          </span>
+        );
+      }
+      
       return `Due ${fullDate}`;
     }
     
@@ -853,6 +869,43 @@ const TaskList: React.FC<TaskListProps> = ({
       const start = formatDateShort(startDate);
       const end = formatDateShort(endDate);
       
+      // Si hay fecha original diferente y está completada, mostrar cambio
+      if (completed && originalDueDate && originalDueDate !== endDate) {
+        const originalEnd = formatDateShort(originalDueDate);
+        
+        // Misma fecha de inicio
+        if (startDate === endDate) {
+          return (
+            <span>
+              <span className="line-through text-gray-400">{start.fullDate} - {originalEnd.fullDate}</span>{' '}
+              <span className="text-green-600 font-medium">{start.fullDate} - {end.fullDate}</span>
+            </span>
+          );
+        }
+        
+        // Mismo mes para las fechas actuales
+        if (start.month === end.month) {
+          const originalSameMonth = start.month === originalEnd.month;
+          return (
+            <span>
+              <span className="line-through text-gray-400">
+                {originalSameMonth ? `${start.day}-${originalEnd.day} ${start.month}` : `${start.fullDate} - ${originalEnd.fullDate}`}
+              </span>{' '}
+              <span className="text-green-600 font-medium">{start.day}-{end.day} {start.month}</span>
+            </span>
+          );
+        }
+        
+        // Meses diferentes
+        return (
+          <span>
+            <span className="line-through text-gray-400">{start.fullDate} - {originalEnd.fullDate}</span>{' '}
+            <span className="text-green-600 font-medium">{start.fullDate} - {end.fullDate}</span>
+          </span>
+        );
+      }
+      
+      // Comportamiento normal sin cambios de fecha
       // Misma fecha
       if (startDate === endDate) {
         return start.fullDate;
@@ -1145,7 +1198,7 @@ const TaskList: React.FC<TaskListProps> = ({
                   <div className="flex items-center space-x-1">
                     <Calendar className="w-3 h-3" />
                     <span className={overdue ? 'text-red-600 font-medium' : lastDay ? 'text-orange-600 font-medium' : ''}>
-                      {formatDateRange(task.startDate, task.dueDate)}
+                      {formatDateRange(task.startDate, task.dueDate, task.originalDueDate, task.completed)}
                     </span>
                   </div>
                 )}

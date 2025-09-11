@@ -18,6 +18,7 @@ model Task {
   completed       Boolean   @default(false)
   priority        String    @default("MEDIUM")
   dueDate         DateTime?
+  originalDueDate DateTime?  // Stores original due date before completion
   startDate       DateTime?
   estimatedHours  Int?
   parentId        String?

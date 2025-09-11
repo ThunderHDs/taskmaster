@@ -51,6 +51,7 @@ interface Task {
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   dueDate?: string;
   startDate?: string;
+  originalDueDate?: string;
   parentId?: string;
   groupId?: string;
   createdAt: string;
@@ -164,7 +165,12 @@ const HomePage: React.FC = () => {
       setTasks(prevTasks => 
         prevTasks.map(task => {
           if (task.id === taskId) {
-            return { ...task, completed: updatedTask.completed };
+            return { 
+              ...task, 
+              completed: updatedTask.completed,
+              dueDate: updatedTask.dueDate,
+              originalDueDate: updatedTask.originalDueDate
+            };
           }
           
           if (task.subtasks && task.subtasks.length > 0) {

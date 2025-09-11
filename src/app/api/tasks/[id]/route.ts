@@ -293,17 +293,45 @@ export async function PUT(
       // Cuando se marca como completada, actualizar la fecha final a la fecha actual
       const completionDate = new Date();
       
+      // Guardar la fecha original antes de actualizarla (solo si no se ha guardado antes)
+      const updateData: any = { dueDate: completionDate };
+      if (existingTask.dueDate && !existingTask.originalDueDate) {
+        updateData.originalDueDate = existingTask.dueDate;
+      }
+      
       // Actualizar la fecha final en la base de datos
       await prisma.task.update({
         where: { id },
-        data: { dueDate: completionDate }
+        data: updateData
       });
+      
+      // Obtener la tarea actualizada con todos los campos
+      const taskAfterCompletion = await prisma.task.findUnique({
+        where: { id },
+        include: {
+          tags: {
+            include: {
+              tag: true
+            }
+          },
+          subtasks: true,
+          parent: true,
+          group: true
+        }
+      });
+      
+      if (taskAfterCompletion) {
+        Object.assign(updatedTask, taskAfterCompletion);
+      }
       
       // Calcular diferencia de días si había una fecha prevista original
       if (existingTask.dueDate) {
         const originalDueDate = new Date(existingTask.dueDate);
-        const timeDifference = completionDate.getTime() - originalDueDate.getTime();
-        const daysDifference = Math.ceil(timeDifference / (1000 * 60 * 60 * 24));
+        const completionDateOnly = new Date(completionDate.getFullYear(), completionDate.getMonth(), completionDate.getDate());
+        const originalDateOnly = new Date(originalDueDate.getFullYear(), originalDueDate.getMonth(), originalDueDate.getDate());
+        
+        const timeDifference = completionDateOnly.getTime() - originalDateOnly.getTime();
+        const daysDifference = Math.round(timeDifference / (1000 * 60 * 60 * 24));
         
         if (daysDifference < 0) {
           // Completada antes de tiempo
@@ -325,17 +353,41 @@ export async function PUT(
     // REGISTRO DE ACTIVIDADES: Crear log de los cambios realizados en la tarea
     const changes = [];
     // Detectar qué campos han cambiado comparando con los valores originales
-    if (title !== undefined && title !== existingTask.title) changes.push('title');
-    if (description !== undefined && description !== existingTask.description) changes.push('description');
+    if (title !== undefined && title !== existingTask.title) {
+      changes.push(`título cambiado de "${existingTask.title}" a "${title}"`);
+    }
+    if (description !== undefined && description !== existingTask.description) {
+      const oldDesc = existingTask.description || '(sin descripción)';
+      const newDesc = description || '(sin descripción)';
+      changes.push(`descripción cambiada de "${oldDesc}" a "${newDesc}"`);
+    }
     if (completed !== undefined && completed !== existingTask.completed) {
       // Mensaje específico para cambios de estado de completado
-      changes.push(completed ? 'marked as completed' : 'marked as incomplete');
+      changes.push(completed ? 'marcada como completada' : 'marcada como pendiente');
     }
-    if (priority !== undefined && priority !== existingTask.priority) changes.push('priority');
-    if (dueDate !== undefined) changes.push('due date');
-    if (startDate !== undefined) changes.push('start date');
-    if (estimatedHours !== undefined) changes.push('estimated hours');
-    if (tagIds !== undefined) changes.push('tags');
+    if (priority !== undefined && priority !== existingTask.priority) {
+      const priorityLabels = { LOW: 'Baja', MEDIUM: 'Media', HIGH: 'Alta', URGENT: 'Urgente' };
+      const oldPriority = priorityLabels[existingTask.priority as keyof typeof priorityLabels] || existingTask.priority;
+      const newPriority = priorityLabels[priority as keyof typeof priorityLabels] || priority;
+      changes.push(`prioridad cambiada de ${oldPriority} a ${newPriority}`);
+    }
+    if (dueDate !== undefined) {
+      const oldDate = existingTask.dueDate ? new Date(existingTask.dueDate).toLocaleDateString('es-ES') : 'sin fecha';
+      const newDate = dueDate ? new Date(dueDate).toLocaleDateString('es-ES') : 'sin fecha';
+      changes.push(`fecha límite cambiada de ${oldDate} a ${newDate}`);
+    }
+    if (startDate !== undefined) {
+      const oldDate = existingTask.startDate ? new Date(existingTask.startDate).toLocaleDateString('es-ES') : 'sin fecha';
+      const newDate = startDate ? new Date(startDate).toLocaleDateString('es-ES') : 'sin fecha';
+      changes.push(`fecha de inicio cambiada de ${oldDate} a ${newDate}`);
+    }
+    if (estimatedHours !== undefined) {
+      const oldHours = existingTask.estimatedHours || 0;
+      changes.push(`horas estimadas cambiadas de ${oldHours}h a ${estimatedHours}h`);
+    }
+    if (tagIds !== undefined) {
+      changes.push('etiquetas actualizadas');
+    }
     
     // Crear entrada en el log de actividades solo si hubo cambios
     if (changes.length > 0) {
@@ -352,7 +404,7 @@ export async function PUT(
         // Si hay mensaje de tiempo de completado, usarlo como detalle principal
         activityDetails = completionTimeMessage;
       } else {
-        activityDetails = `Task "${updatedTask.title}" was updated: ${changes.join(', ')}`;
+        activityDetails = changes.join(', ');
       }
       
       await prisma.activityLog.create({

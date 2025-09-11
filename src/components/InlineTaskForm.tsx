@@ -36,6 +36,7 @@ interface Task {
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';             // Nivel de prioridad
   dueDate?: string;                                             // Fecha de vencimiento opcional
   startDate?: string;                                           // Fecha de inicio opcional
+  originalDueDate?: string;                                     // Fecha límite original antes de completar temprano
   parentId?: string;                                            // ID de tarea padre (para subtareas)
   groupId?: string;                                             // ID del grupo al que pertenece
   createdAt: string;                                            // Fecha de creación
