@@ -49,6 +49,20 @@
    - **Área afectada:** ~~Sistema de notificaciones, manejo de fechas~~ **IMPLEMENTADO: Último día (naranja) + Overdue (rojo)**
    - **Investigación necesaria:** ~~COMPLETADA - Se implementó lógica de "último día" con color naranja y overdue real con color rojo~~
 
+6. **No se pueden ingresar espacios al editar nombres de tareas o subtareas**
+   - **Descripción:** Al editar el nombre de una tarea o subtarea, no es posible ingresar espacios en el campo de texto
+   - **Comportamiento esperado:** Debería permitir ingresar espacios normalmente para crear nombres descriptivos
+   - **Comportamiento actual:** Los espacios no se registran o se eliminan automáticamente
+   - **Impacto:** Limitación en la capacidad de crear nombres descriptivos y claros para las tareas
+   - **Prioridad:** Media-Alta
+   - **Fecha identificada:** 2025-01-13
+   - **Área afectada:** Formularios de edición de tareas y subtareas
+   - **Investigación necesaria:**
+     - Revisar la lógica de manejo de input en los formularios de edición
+     - Verificar si hay validaciones o filtros que estén removiendo espacios
+     - Comprobar el comportamiento en diferentes navegadores
+     - Identificar si el problema afecta solo a espacios o a otros caracteres especiales
+
 ---
 
 ## Mejoras Propuestas
