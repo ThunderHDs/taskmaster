@@ -151,6 +151,25 @@
   - Validación de permisos para operaciones masivas
   - Interfaz intuitiva para selección y edición
 
+### 8. Modificación masiva de datos de subtareas
+- **Descripción:** Implementar la capacidad de modificar los datos de las subtareas cuando se realiza una edición masiva de tareas
+- **Objetivo:** Permitir que los cambios aplicados a las tareas padre se propaguen automáticamente a sus subtareas cuando sea necesario
+- **Beneficio:** Mejorar la eficiencia en la gestión de proyectos complejos con múltiples niveles de subtareas, evitando la necesidad de editar cada subtarea individualmente
+- **Prioridad:** Media-Alta
+- **Fecha propuesta:** 2025-01-13
+- **Funcionalidades requeridas:**
+  - Opción para aplicar cambios a subtareas durante edición masiva
+  - Selector de qué propiedades propagar (fechas, prioridad, grupo, estado)
+  - Vista previa de cambios antes de aplicar
+  - Respeto a la jerarquía de subtareas (aplicar solo a nivel inmediato o a todos los niveles)
+  - Confirmación explícita del usuario antes de modificar subtareas
+- **Consideraciones técnicas:**
+  - Implementar lógica recursiva para navegación de jerarquías de subtareas
+  - Validar que los cambios sean coherentes con la estructura de dependencias
+  - Manejar conflictos cuando las subtareas tienen valores específicos que no deben ser sobrescritos
+  - Implementar rollback en caso de errores durante la aplicación masiva
+  - Registrar en el historial de actividades los cambios realizados en cada subtarea
+
 ---
 
 ## Notas Técnicas
