@@ -25,24 +25,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // VALIDACIÓN: Verificar que se proporcione un grupo
-    if (!groupId) {
-      return NextResponse.json(
-        { error: 'Se requiere un grupo para las tareas' },
-        { status: 400 }
-      );
-    }
+    // VALIDACIÓN: Verificar que el grupo existe (si se proporciona)
+    let group = null;
+    if (groupId) {
+      group = await prisma.taskGroup.findUnique({
+        where: { id: groupId }
+      });
 
-    // VALIDACIÓN: Verificar que el grupo existe
-    const group = await prisma.taskGroup.findUnique({
-      where: { id: groupId }
-    });
-
-    if (!group) {
-      return NextResponse.json(
-        { error: 'El grupo especificado no existe' },
-        { status: 404 }
-      );
+      if (!group) {
+        return NextResponse.json(
+          { error: 'El grupo especificado no existe' },
+          { status: 404 }
+        );
+      }
     }
 
     // VALIDACIÓN: Verificar que las etiquetas existen
@@ -151,16 +146,22 @@ export async function POST(request: NextRequest) {
         }
         
         // Crear la tarea principal
+        const taskData: any = {
+          title,
+          description: description || undefined,
+          priority,
+          startDate: taskStartDate,
+          dueDate: taskDueDate,
+          completed: false
+        };
+        
+        // Solo agregar groupId si existe
+        if (taskGroupId) {
+          taskData.groupId = taskGroupId;
+        }
+        
         const task = await tx.task.create({
-          data: {
-            title,
-            description: description || undefined,
-            priority,
-            startDate: taskStartDate,
-            dueDate: taskDueDate,
-            groupId: taskGroupId,
-            completed: false
-          }
+          data: taskData
         });
 
         // Asociar etiquetas si las hay
@@ -175,17 +176,27 @@ export async function POST(request: NextRequest) {
 
         // Crear subtareas si las hay
         if (validSubtasks.length > 0) {
-          await tx.task.createMany({
-            data: validSubtasks.map(subtaskTitle => ({
+          const subtaskData = validSubtasks.map(subtaskTitle => {
+            const subtask: any = {
               title: subtaskTitle,
               description: undefined,
               priority: 'MEDIUM',
               startDate: taskStartDate,
               dueDate: taskDueDate,
               parentId: task.id,
-              groupId: taskGroupId,
               completed: false
-            }))
+            };
+            
+            // Solo agregar groupId si existe
+            if (taskGroupId) {
+              subtask.groupId = taskGroupId;
+            }
+            
+            return subtask;
+          });
+          
+          await tx.task.createMany({
+            data: subtaskData
           });
         }
 
@@ -211,7 +222,9 @@ export async function POST(request: NextRequest) {
           data: {
             taskId: task.id,
             action: 'CREATED',
-            details: `Tarea creada como parte de creación masiva en grupo "${group.name}"`
+            details: group 
+              ? `Tarea creada como parte de creación masiva en grupo "${group.name}"`
+              : 'Tarea creada como parte de creación masiva sin grupo'
           }
         });
       }
@@ -225,7 +238,7 @@ export async function POST(request: NextRequest) {
       tasks: result,
       summary: {
         totalCreated: result.length,
-        groupName: group.name,
+        groupName: group?.name || null,
         hasSubtasks: validSubtasks.length > 0,
         subtaskCount: validSubtasks.length
       }
@@ -446,16 +459,101 @@ export async function PUT(request: NextRequest) {
           }
         }
 
+        // Procesar actualizaciones de subtareas existentes
+        if (updates.subtaskUpdates) {
+          for (const [key, subtaskUpdate] of Object.entries(updates.subtaskUpdates)) {
+            const [parentTaskId, subtaskId] = key.split('-');
+            
+            // Solo procesar si la subtarea pertenece a la tarea actual
+            if (parentTaskId === taskId) {
+              const subtaskUpdateData: any = {};
+              
+              if (subtaskUpdate.title !== undefined) {
+                subtaskUpdateData.title = subtaskUpdate.title;
+              }
+              if (subtaskUpdate.description !== undefined) {
+                subtaskUpdateData.description = subtaskUpdate.description;
+              }
+              if (subtaskUpdate.priority !== undefined) {
+                subtaskUpdateData.priority = subtaskUpdate.priority;
+              }
+              if (subtaskUpdate.startDate !== undefined) {
+                subtaskUpdateData.startDate = subtaskUpdate.startDate ? new Date(subtaskUpdate.startDate) : null;
+              }
+              if (subtaskUpdate.dueDate !== undefined) {
+                subtaskUpdateData.dueDate = subtaskUpdate.dueDate ? new Date(subtaskUpdate.dueDate) : null;
+              }
+              if (subtaskUpdate.completed !== undefined) {
+                subtaskUpdateData.completed = subtaskUpdate.completed;
+              }
+              
+              // Actualizar la subtarea
+              await tx.task.update({
+                where: { id: subtaskId },
+                data: subtaskUpdateData
+              });
+            }
+          }
+        }
+
+        // Procesar subtareas
+        if (updates.subtasks) {
+          // Agregar subtareas comunes
+          if (updates.subtasks.common && updates.subtasks.common.length > 0) {
+            for (const subtaskTitle of updates.subtasks.common) {
+              if (subtaskTitle.trim()) {
+                await tx.task.create({
+                  data: {
+                    title: subtaskTitle.trim(),
+                    description: '',
+                    priority: 'MEDIUM',
+                    completed: false,
+                    parentId: taskId
+                  }
+                });
+              }
+            }
+          }
+
+          // Agregar subtareas individuales
+          if (updates.subtasks.individual && updates.subtasks.individual[taskId]) {
+            const individualSubtasks = updates.subtasks.individual[taskId];
+            for (const subtaskTitle of individualSubtasks) {
+              if (subtaskTitle.trim()) {
+                await tx.task.create({
+                  data: {
+                    title: subtaskTitle.trim(),
+                    description: '',
+                    priority: 'MEDIUM',
+                    completed: false,
+                    parentId: taskId
+                  }
+                });
+              }
+            }
+          }
+        }
+
         updatedTasks.push(updatedTask);
 
         // Registrar actividad
+        let activityDetails = 'Tarea actualizada mediante edición masiva';
+        if (updates.individualUpdates && updates.individualUpdates[taskId]) {
+          activityDetails += ' con datos individuales';
+        }
+        if (updates.subtasks) {
+          const commonCount = updates.subtasks.common?.length || 0;
+          const individualCount = updates.subtasks.individual?.[taskId]?.length || 0;
+          if (commonCount > 0 || individualCount > 0) {
+            activityDetails += ` - Subtareas agregadas: ${commonCount + individualCount}`;
+          }
+        }
+        
         await tx.activityLog.create({
           data: {
             taskId,
             action: 'UPDATED',
-            details: updates.individualUpdates && updates.individualUpdates[taskId] 
-              ? 'Tarea actualizada mediante edición masiva con datos individuales'
-              : 'Tarea actualizada mediante edición masiva'
+            details: activityDetails
           }
         });
       }

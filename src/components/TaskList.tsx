@@ -595,7 +595,7 @@ const TaskList: React.FC<TaskListProps> = ({
   };
 
   /**
-   * Función para obtener las tareas seleccionadas completas
+   * Función para obtener las tareas seleccionadas completas incluyendo todas sus subtareas
    */
   const getSelectedTasksData = (): Task[] => {
     const selectedTasksData: Task[] = [];
@@ -611,9 +611,21 @@ const TaskList: React.FC<TaskListProps> = ({
       return null;
     };
     
+    // Función recursiva para agregar una tarea y todas sus subtareas
+    const addTaskWithSubtasks = (task: Task) => {
+      selectedTasksData.push(task);
+      if (task.subtasks && task.subtasks.length > 0) {
+        task.subtasks.forEach(subtask => {
+          addTaskWithSubtasks(subtask);
+        });
+      }
+    };
+    
     selectedTasks.forEach(taskId => {
       const task = findTaskById(tasks, taskId);
-      if (task) selectedTasksData.push(task);
+      if (task) {
+        addTaskWithSubtasks(task);
+      }
     });
     
     return selectedTasksData;
@@ -635,6 +647,14 @@ const TaskList: React.FC<TaskListProps> = ({
    * @param completed - Nuevo estado de completado
    */
   const handleTaskToggleWithAnimation = (taskId: string, completed: boolean) => {
+    // Validar que taskId sea válido antes de proceder
+    if (!taskId || typeof taskId !== 'string' || taskId.trim() === '') {
+      console.error('Invalid taskId in handleTaskToggleWithAnimation:', taskId);
+      return;
+    }
+    
+    console.log(`TaskList: handleTaskToggleWithAnimation called with taskId: ${taskId}, completed: ${completed}`);
+    
     if (completed) {
       // Agregar animación de completado
       setCompletingTasks(prev => new Set(prev).add(taskId));
@@ -1150,10 +1170,16 @@ const TaskList: React.FC<TaskListProps> = ({
                 <input
                   type="checkbox"
                   checked={task.completed}
-                  onChange={(e) => handleTaskToggleWithAnimation(task.id, e.target.checked)}
+                  onChange={(e) => {
+                    if (task.id && typeof task.id === 'string' && task.id.trim() !== '') {
+                      handleTaskToggleWithAnimation(task.id, e.target.checked);
+                    } else {
+                      console.error('Invalid task.id in checkbox onChange:', task.id, 'Task:', task);
+                    }
+                  }}
                   disabled={isMultiSelectMode}
                   className={`w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200 ${
-                    completingTasks.has(task.id) ? 'transform scale-110' : ''
+                    task.id && completingTasks.has(task.id) ? 'transform scale-110' : ''
                   } ${isMultiSelectMode ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                 />
               </div>
@@ -1297,6 +1323,7 @@ const TaskList: React.FC<TaskListProps> = ({
               
               {/* Botones de acción */}
               <div className="flex items-center gap-1">
+
                 {/* Botón de historial - solo para tareas padre */}
                 {!task.parentId && (
                   <button

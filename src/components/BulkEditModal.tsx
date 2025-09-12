@@ -54,6 +54,17 @@ interface BulkUpdateData {
       tagIds?: string[];
     };
   };
+  // Para actualizaciones de subtareas
+  subtaskUpdates?: {
+    [key: string]: {
+      title?: string;
+      description?: string;
+      priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+      startDate?: string;
+      dueDate?: string;
+      completed?: boolean;
+    };
+  };
 }
 
 interface IndividualTaskData {
@@ -97,6 +108,20 @@ export default function BulkEditModal({
     tags: boolean;
   }>({ dates: false, groups: false, tags: false });
   const [individualData, setIndividualData] = useState<IndividualTaskData[]>([]);
+  
+  // Estados para gestión de subtareas
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const [showEditForms, setShowEditForms] = useState<Set<string>>(new Set());
+  const [subtaskEdits, setSubtaskEdits] = useState<{
+    [key: string]: {
+      title?: string;
+      description?: string;
+      priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+      startDate?: string;
+      dueDate?: string;
+      completed?: boolean;
+    };
+  }>({});
 
   // OPCIONES DE PRIORIDAD
   const priorityOptions = [
@@ -114,6 +139,12 @@ export default function BulkEditModal({
       setError(null);
       setFieldsToUpdate(new Set());
       setIndividualMode({ dates: false, groups: false, tags: false });
+      
+      // Auto-expandir tareas principales que tienen subtareas
+      const tasksWithSubtasks = selectedTasks
+        .filter(task => task.subtasks && task.subtasks.length > 0)
+        .map(task => task.id);
+      setExpandedTasks(new Set(tasksWithSubtasks));
     }
   }, [isOpen, selectedTasks]);
 
@@ -187,7 +218,7 @@ export default function BulkEditModal({
     });
 
     // Analizar etiquetas
-    const allTagIds = selectedTasks.flatMap(task => task.tags.map(t => t.tag.id));
+    const allTagIds = selectedTasks.flatMap(task => (task.tags || []).map(t => t.tag.id));
     const tagCounts = allTagIds.reduce((acc, tagId) => {
       acc[tagId] = (acc[tagId] || 0) + 1;
       return acc;
@@ -203,6 +234,20 @@ export default function BulkEditModal({
       hasCommonValue: false, // Las etiquetas siempre se consideran diferentes para permitir edición
       commonValue: commonTagIds,
       differentValues: Object.keys(tagCounts),
+      canEdit: true
+    });
+
+    // Analizar subtareas
+    const subtaskCounts = selectedTasks.map(task => task.subtasks?.length || 0);
+    const uniqueSubtaskCounts = [...new Set(subtaskCounts)];
+    const totalSubtasks = subtaskCounts.reduce((sum, count) => sum + count, 0);
+    
+    comparisons.push({
+      field: 'subtasks',
+      label: 'Subtareas',
+      hasCommonValue: uniqueSubtaskCounts.length === 1,
+      commonValue: uniqueSubtaskCounts.length === 1 ? uniqueSubtaskCounts[0] : undefined,
+      differentValues: uniqueSubtaskCounts,
       canEdit: true
     });
 
@@ -275,6 +320,18 @@ export default function BulkEditModal({
     
     // Agregar automáticamente el campo a los campos a actualizar
     setFieldsToUpdate(prev => new Set([...prev, field]));
+  };
+
+  // FUNCIÓN: Actualizar ediciones de subtareas
+  const updateSubtaskEdit = (taskId: string, subtaskId: string, field: string, value: any) => {
+    const key = `${taskId}-${subtaskId}`;
+    setSubtaskEdits(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        [field]: value
+      }
+    }));
   };
 
   // FUNCIÓN: Validar formulario
@@ -372,11 +429,17 @@ export default function BulkEditModal({
         }
       }
 
+      // Agregar cambios de subtareas si existen
+      if (Object.keys(subtaskEdits).length > 0) {
+        updates.subtaskUpdates = subtaskEdits;
+      }
+
       console.log('🔍 BulkEditModal - Datos a enviar:');
       console.log('fieldsToUpdate:', Array.from(fieldsToUpdate));
       console.log('individualMode:', individualMode);
       console.log('formData:', formData);
       console.log('individualData:', individualData);
+      console.log('subtaskEdits:', subtaskEdits);
       console.log('updates:', updates);
       console.log('selectedTasks count:', selectedTasks.length);
 
@@ -402,6 +465,223 @@ export default function BulkEditModal({
   // FUNCIÓN: Obtener nombres de etiquetas
   const getTagNames = (tagIds: string[]) => {
     return tagIds.map(id => tags.find(tag => tag.id === id)?.name).filter(Boolean).join(', ');
+  };
+
+  // FUNCIÓN: Renderizar jerarquía de tareas de forma recursiva
+  const renderTaskHierarchy = (task: Task, level: number = 0): JSX.Element => {
+    const hasSubtasks = task.subtasks && task.subtasks.length > 0;
+    const isExpanded = expandedTasks.has(task.id);
+    
+    // Clases de indentación más claras
+    const getIndentClass = () => {
+      if (level === 0) return '';
+      if (level === 1) return 'ml-4 border-l-2 border-blue-200 pl-4';
+      return 'ml-6 border-l-2 border-gray-300 pl-3';
+    };
+    
+    // Colores de fondo por nivel
+    const getBackgroundClass = () => {
+      if (level === 0) return 'bg-gray-100';
+      if (level === 1) return 'bg-blue-50';
+      return 'bg-gray-50';
+    };
+    
+    // Solo las subtareas (nivel > 0) tienen formularios de edición
+    const canEdit = level > 0;
+    const taskKey = `${task.parentId || 'root'}-${task.id}`;
+    const isEditFormOpen = showEditForms.has(taskKey);
+
+    return (
+      <div key={task.id} className={`${getIndentClass()} ${level > 0 ? 'mt-1' : 'mb-2'}`}>
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          {/* Encabezado de la tarea */}
+          <div className={`px-4 py-3 flex items-center justify-between ${getBackgroundClass()}`}>
+            <div className="flex items-center space-x-3">
+              {/* Icono según el nivel */}
+              {level === 0 ? (
+                <div className="flex items-center space-x-2">
+                  <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                  <span className="font-semibold text-gray-900 text-base">{task.title}</span>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2">
+                  <div className={`w-3 h-3 rounded-full ${
+                    level === 1 ? 'bg-blue-400' : 'bg-gray-400'
+                  }`}></div>
+                  <span className={`font-medium ${
+                    level === 1 ? 'text-gray-800 text-sm' : 'text-gray-700 text-sm'
+                  }`}>{task.title}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Botones de acción */}
+            <div className="flex items-center space-x-2">
+              {/* Botón de editar (solo para subtareas) */}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newShowEditForms = new Set(showEditForms);
+                    if (isEditFormOpen) {
+                      newShowEditForms.delete(taskKey);
+                    } else {
+                      newShowEditForms.add(taskKey);
+                    }
+                    setShowEditForms(newShowEditForms);
+                  }}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    isEditFormOpen 
+                      ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {isEditFormOpen ? 'Ocultar' : 'Editar'}
+                </button>
+              )}
+              
+              {/* Botón de expandir/contraer (solo si tiene subtareas) */}
+              {hasSubtasks && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newExpanded = new Set(expandedTasks);
+                    if (isExpanded) {
+                      newExpanded.delete(task.id);
+                    } else {
+                      newExpanded.add(task.id);
+                    }
+                    setExpandedTasks(newExpanded);
+                  }}
+                  className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <svg 
+                    className={`h-4 w-4 transform transition-transform ${
+                      isExpanded ? 'rotate-180' : ''
+                    }`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Formulario de edición (solo para subtareas cuando está activado) */}
+          {canEdit && isEditFormOpen && (
+            <div className="px-4 py-4 bg-white border-t border-gray-200">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Título */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Título
+                  </label>
+                  <input
+                    type="text"
+                    value={subtaskEdits[`${task.parentId || 'root'}-${task.id}`]?.title ?? task.title}
+                    onChange={(e) => updateSubtaskEdit(task.parentId || 'root', task.id, 'title', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Título de la subtarea"
+                  />
+                </div>
+
+                {/* Prioridad */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Prioridad
+                  </label>
+                  <select
+                    value={subtaskEdits[`${task.parentId || 'root'}-${task.id}`]?.priority ?? task.priority}
+                    onChange={(e) => updateSubtaskEdit(task.parentId || 'root', task.id, 'priority', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="LOW">Baja</option>
+                    <option value="MEDIUM">Media</option>
+                    <option value="HIGH">Alta</option>
+                    <option value="URGENT">Urgente</option>
+                  </select>
+                </div>
+
+                {/* Fecha de inicio */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Fecha de inicio
+                  </label>
+                  <input
+                    type="date"
+                    value={subtaskEdits[`${task.parentId || 'root'}-${task.id}`]?.startDate ?? (task.startDate ? new Date(task.startDate).toISOString().split('T')[0] : '')}
+                    onChange={(e) => updateSubtaskEdit(task.parentId || 'root', task.id, 'startDate', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                {/* Fecha de vencimiento */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Fecha de vencimiento
+                  </label>
+                  <input
+                    type="date"
+                    value={subtaskEdits[`${task.parentId || 'root'}-${task.id}`]?.dueDate ?? (task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : '')}
+                    onChange={(e) => updateSubtaskEdit(task.parentId || 'root', task.id, 'dueDate', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                {/* Descripción */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Descripción
+                  </label>
+                  <textarea
+                    value={subtaskEdits[`${task.parentId || 'root'}-${task.id}`]?.description ?? task.description ?? ''}
+                    onChange={(e) => updateSubtaskEdit(task.parentId || 'root', task.id, 'description', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    rows={3}
+                    placeholder="Descripción de la subtarea"
+                  />
+                </div>
+
+                {/* Estado completado */}
+                <div className="md:col-span-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={subtaskEdits[`${task.parentId || 'root'}-${task.id}`]?.completed ?? task.completed}
+                      onChange={(e) => updateSubtaskEdit(task.parentId || 'root', task.id, 'completed', e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700">Marcar como completada</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Indicador de cambios */}
+              {subtaskEdits[`${task.parentId || 'root'}-${task.id}`] && (
+                <div className="mt-3 flex items-center space-x-2 text-sm text-blue-600">
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span>Cambios pendientes de guardar</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Renderizado recursivo de subtareas - máximo 3 niveles */}
+        {hasSubtasks && isExpanded && level < 2 && (
+          <div className="mt-2 space-y-1">
+            {task.subtasks?.map(subtask => renderTaskHierarchy(subtask, level + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // RENDERIZADO CONDICIONAL
@@ -447,7 +727,7 @@ export default function BulkEditModal({
                 Análisis de campos
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {fieldComparisons.map((comparison) => (
+                {fieldComparisons.filter(comparison => comparison.field !== 'subtasks').map((comparison) => (
                   <div key={comparison.field} className="bg-white p-3 rounded border">
                     <div className="flex items-center justify-between mb-2">
                       <label className="flex items-center space-x-2">
@@ -497,6 +777,47 @@ export default function BulkEditModal({
                   </div>
                 ))}
               </div>
+              
+              {/* Sección de Subtareas - Ocupa todo el ancho */}
+              {fieldComparisons.find(comparison => comparison.field === 'subtasks') && (
+                <div className="mt-4 bg-white p-4 rounded border">
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="flex items-center space-x-3">
+                      <input
+                        type="checkbox"
+                        checked={fieldsToUpdate.has('subtasks')}
+                        onChange={() => handleFieldToggle('subtasks')}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 scale-110"
+                      />
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-5 w-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                        </svg>
+                        <span className="text-lg font-medium text-gray-700">
+                          Subtareas
+                        </span>
+                      </div>
+                    </label>
+                    <span className={`px-3 py-1 rounded text-sm font-medium ${
+                      fieldComparisons.find(comparison => comparison.field === 'subtasks')?.hasCommonValue
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {fieldComparisons.find(comparison => comparison.field === 'subtasks')?.hasCommonValue ? 'Común' : 'Diferente'}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded">
+                    {(() => {
+                      const subtaskComparison = fieldComparisons.find(comparison => comparison.field === 'subtasks');
+                      return subtaskComparison?.hasCommonValue ? (
+                        <span><strong>Valor actual:</strong> {subtaskComparison.commonValue} subtarea{subtaskComparison.commonValue !== 1 ? 's' : ''} cada una</span>
+                      ) : (
+                        <span><strong>Valores diferentes:</strong> {subtaskComparison?.differentValues.join(', ')} subtareas por tarea</span>
+                      );
+                    })()} 
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* CAMPOS DE EDICIÓN */}
@@ -800,6 +1121,66 @@ export default function BulkEditModal({
                           </div>
                         ))}
                       </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Subtareas */}
+              {fieldsToUpdate.has('subtasks') && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-md font-medium text-gray-900 flex items-center">
+                      <svg className="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                      Gestión de Subtareas
+                    </h4>
+                  </div>
+                  
+                  {selectedTasks.filter(task => task.subtasks && task.subtasks.length > 0).length === 0 ? (
+                    <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+                      <svg className="h-12 w-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No hay subtareas para editar</h3>
+                      <p className="text-gray-500 text-sm">
+                        Las tareas seleccionadas no tienen subtareas. Solo se mostrarán las tareas que contengan subtareas.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-white border border-gray-200 rounded-lg max-h-96 overflow-y-auto">
+                      {selectedTasks
+                        .filter(task => {
+                          // Solo mostrar tareas que tienen subtareas
+                          if (!task.subtasks || task.subtasks.length === 0) return false;
+                          
+                          // Excluir tareas que son subtareas de otras tareas seleccionadas
+                          const isSubtaskOfSelected = selectedTasks.some(parentTask => 
+                            parentTask.id !== task.id && 
+                            parentTask.subtasks?.some(subtask => subtask.id === task.id)
+                          );
+                          
+                          return !isSubtaskOfSelected;
+                        })
+                        .map((task) => renderTaskHierarchy(task, 0))}
+                    </div>
+                  )}
+
+                  {/* Resumen de cambios */}
+                  {Object.keys(subtaskEdits).length > 0 && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <svg className="h-4 w-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                        <span className="text-sm font-medium text-blue-800">
+                          {Object.keys(subtaskEdits).length} subtarea(s) con cambios pendientes
+                        </span>
+                      </div>
+                      <p className="text-xs text-blue-700">
+                        Los cambios se aplicarán cuando guardes la edición masiva.
+                      </p>
                     </div>
                   )}
                 </div>
