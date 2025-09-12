@@ -287,9 +287,131 @@ const HomePage: React.FC = () => {
     setBulkEditTasks([]);
   };
 
+  // Estado para evitar múltiples actualizaciones simultáneas
+  const [processingTasks, setProcessingTasks] = useState<Set<string>>(new Set());
+
+  // Función auxiliar para actualizar subtareas recursivamente
+  const updateTaskRecursively = (task: Task, taskId: string, updatedTask: any, currentProcessingTasks?: Set<string>): Task => {
+    // Validaciones de entrada
+    if (!task || !taskId || !updatedTask) {
+      console.warn('Invalid parameters in updateTaskRecursively:', { task: !!task, taskId, updatedTask: !!updatedTask });
+      return task;
+    }
+
+    if (task.id === taskId) {
+      console.log(`Updating task ${taskId} with new data:`, updatedTask);
+      return { 
+        ...task, 
+        completed: updatedTask.completed,
+        dueDate: updatedTask.dueDate,
+        originalDueDate: updatedTask.originalDueDate
+      };
+    }
+    
+    if (task.subtasks && task.subtasks.length > 0) {
+      const updatedSubtasks = task.subtasks.map(subtask => 
+        updateTaskRecursively(subtask, taskId, updatedTask, currentProcessingTasks)
+      );
+      
+      // Lógica automática: si todas las subtareas están completadas, completar la tarea principal
+      const allSubtasksCompleted = updatedSubtasks.length > 0 && updatedSubtasks.every(subtask => subtask.completed);
+      const processingSet = currentProcessingTasks || processingTasks;
+      const shouldAutoComplete = allSubtasksCompleted && !task.completed && task.id !== taskId && !processingSet.has(task.id);
+      
+      if (shouldAutoComplete) {
+        console.log(`Auto-completing parent task ${task.id} because all subtasks are completed`);
+        
+        // Prevenir múltiples auto-completados simultáneos
+        setProcessingTasks(prev => {
+          if (prev.has(task.id)) {
+            console.log(`Task ${task.id} is already being auto-completed, skipping`);
+            return prev;
+          }
+          return new Set(prev).add(task.id);
+        });
+        
+        // Usar un timeout más corto y con mejor manejo de errores
+        setTimeout(async () => {
+          try {
+            console.log(`Executing auto-complete for task ${task.id}`);
+            
+            // Hacer la llamada a la API directamente sin usar handleTaskToggle para evitar recursión
+            const response = await fetch(`/api/tasks/${task.id}`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ completed: true }),
+            });
+
+            if (response.ok) {
+              const updatedParentTask = await response.json();
+              console.log(`Auto-complete successful for task ${task.id}:`, updatedParentTask);
+              
+              // Actualizar el estado directamente sin recursión
+              setTasks(currentTasks => 
+                currentTasks.map(t => 
+                  t.id === task.id ? { 
+                    ...t, 
+                    completed: true, 
+                    dueDate: updatedParentTask.dueDate, 
+                    originalDueDate: updatedParentTask.originalDueDate 
+                  } : t
+                )
+              );
+            } else {
+              const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+              console.error(`Auto-complete failed for task ${task.id}:`, errorData);
+            }
+          } catch (error) {
+            console.error(`Error in auto-complete for task ${task.id}:`, {
+              error: error instanceof Error ? error.message : 'Unknown error',
+              stack: error instanceof Error ? error.stack : undefined
+            });
+          } finally {
+            // Limpiar el estado de procesamiento de forma segura
+            setProcessingTasks(prev => {
+              const newSet = new Set(prev);
+              const wasRemoved = newSet.delete(task.id);
+              console.log(`Cleaned up auto-complete processing for task ${task.id}, was in set: ${wasRemoved}`);
+              return newSet;
+            });
+          }
+        }, 100); // Reducido de 300ms a 100ms para mejor responsividad
+      }
+      
+      return {
+        ...task,
+        subtasks: updatedSubtasks
+      };
+    }
+    
+    return task;
+  };
+
   // Task handlers
   const handleTaskToggle = async (taskId: string, completed: boolean) => {
+    // Evitar múltiples actualizaciones simultáneas de la misma tarea
+    if (processingTasks.has(taskId)) {
+      console.log(`Task ${taskId} is already being processed, skipping...`);
+      return;
+    }
+
+    setProcessingTasks(prev => new Set(prev).add(taskId));
+
     try {
+      // Validar que taskId no esté vacío
+      if (!taskId || taskId.trim() === '') {
+        throw new Error('Invalid task ID provided');
+      }
+
+      // Validar que completed sea un booleano
+      if (typeof completed !== 'boolean') {
+        throw new Error('Invalid completed value provided');
+      }
+
+      console.log(`Attempting to toggle task ${taskId} to ${completed ? 'completed' : 'pending'}`);
+
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
         headers: {
@@ -299,50 +421,69 @@ const HomePage: React.FC = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update task');
+        let errorMessage = 'Failed to update task';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+          console.error('API Error Response:', errorData);
+        } catch (parseError) {
+          console.error('Failed to parse error response:', parseError);
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const updatedTask = await response.json();
+      console.log('Task updated successfully:', updatedTask);
+      
+      // Crear una copia del set de processingTasks para evitar problemas de concurrencia
+      const currentProcessingTasks = new Set(processingTasks);
       
       setTasks(prevTasks => 
-        prevTasks.map(task => {
-          if (task.id === taskId) {
-            return { 
-              ...task, 
-              completed: updatedTask.completed,
-              dueDate: updatedTask.dueDate,
-              originalDueDate: updatedTask.originalDueDate
-            };
-          }
-          
-          if (task.subtasks && task.subtasks.length > 0) {
-            const updatedSubtasks = task.subtasks.map(subtask => 
-              subtask.id === taskId 
-                ? { ...subtask, completed: updatedTask.completed }
-                : subtask
-            );
-            
-            // Lógica automática: si todas las subtareas están completadas, completar la tarea principal
-            const allSubtasksCompleted = updatedSubtasks.length > 0 && updatedSubtasks.every(subtask => subtask.completed);
-            const shouldAutoComplete = allSubtasksCompleted && !task.completed;
-            
-            if (shouldAutoComplete) {
-              // Auto-completar la tarea principal
-              handleTaskToggle(task.id, true);
-            }
-            
-            return {
-              ...task,
-              subtasks: updatedSubtasks
-            };
-          }
-          
-          return task;
-        })
+        prevTasks.map(task => updateTaskRecursively(task, taskId, updatedTask, currentProcessingTasks))
       );
     } catch (error) {
-      console.error('Error toggling task:', error);
+      console.error('Error in handleTaskToggle:', {
+        taskId,
+        completed,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      
+      // Mostrar notificación de error al usuario (opcional)
+      // Aquí podrías agregar una notificación toast si tienes un sistema de notificaciones
+      
+      // Re-lanzar el error solo si es crítico, de lo contrario solo loguearlo
+      if (error instanceof Error && error.message.includes('Invalid')) {
+        throw error; // Re-lanzar errores de validación
+      }
+    } finally {
+      // Limpiar el estado de procesamiento de forma segura
+      setProcessingTasks(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskId);
+        console.log(`Removed task ${taskId} from processing set. Remaining:`, Array.from(newSet));
+        return newSet;
+      });
     }
+  };
+
+  // Función auxiliar para actualizar tareas recursivamente (para handleTaskUpdate)
+  const updateTaskDataRecursively = (task: Task, taskId: string, updatedTask: any): Task => {
+    if (task.id === taskId) {
+      return { ...task, ...updatedTask };
+    }
+    
+    if (task.subtasks && task.subtasks.length > 0) {
+      return {
+        ...task,
+        subtasks: task.subtasks.map(subtask => 
+          updateTaskDataRecursively(subtask, taskId, updatedTask)
+        )
+      };
+    }
+    
+    return task;
   };
 
   const handleTaskUpdate = async (taskId: string, taskData: Partial<Task>) => {
@@ -363,24 +504,7 @@ const HomePage: React.FC = () => {
       const updatedTask = await response.json();
       
       setTasks(prevTasks => 
-        prevTasks.map(task => {
-          if (task.id === taskId) {
-            return { ...task, ...updatedTask };
-          }
-          
-          if (task.subtasks && task.subtasks.length > 0) {
-            return {
-              ...task,
-              subtasks: task.subtasks.map(subtask => 
-                subtask.id === taskId 
-                  ? { ...subtask, ...updatedTask }
-                  : subtask
-              )
-            };
-          }
-          
-          return task;
-        })
+        prevTasks.map(task => updateTaskDataRecursively(task, taskId, updatedTask))
       );
     } catch (error) {
       console.error('Error updating task:', error);
@@ -390,24 +514,7 @@ const HomePage: React.FC = () => {
 
   const handleTaskStateUpdate = (taskId: string, updatedTask: Task) => {
     setTasks(prevTasks => 
-      prevTasks.map(task => {
-        if (task.id === taskId) {
-          return { ...task, ...updatedTask };
-        }
-        
-        if (task.subtasks && task.subtasks.length > 0) {
-          return {
-            ...task,
-            subtasks: task.subtasks.map(subtask => 
-              subtask.id === taskId 
-                ? { ...subtask, ...updatedTask }
-                : subtask
-            )
-          };
-        }
-        
-        return task;
-      })
+      prevTasks.map(task => updateTaskDataRecursively(task, taskId, updatedTask))
     );
   };
 

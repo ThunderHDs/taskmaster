@@ -52,6 +52,26 @@ export async function GET(request: NextRequest) {
           }
         },
         subtasks: {
+          include: {
+            tags: {
+              include: {
+                tag: true
+              }
+            },
+            subtasks: {
+              include: {
+                tags: {
+                  include: {
+                    tag: true
+                  }
+                },
+                subtasks: true // Tercer nivel si es necesario
+              },
+              orderBy: {
+                createdAt: 'asc'
+              }
+            }
+          },
           orderBy: {
             createdAt: 'asc'
           }
