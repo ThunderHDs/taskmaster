@@ -112,6 +112,7 @@ export default function BulkEditModal({
   // Estados para gestión de subtareas
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [showEditForms, setShowEditForms] = useState<Set<string>>(new Set());
+  const [subtaskViewMode, setSubtaskViewMode] = useState<'hierarchy' | 'similar'>('hierarchy');
   const [subtaskEdits, setSubtaskEdits] = useState<{
     [key: string]: {
       title?: string;
@@ -122,6 +123,7 @@ export default function BulkEditModal({
       completed?: boolean;
     };
   }>({});
+  const [editingSubtasks, setEditingSubtasks] = useState<Set<string>>(new Set());
 
   // OPCIONES DE PRIORIDAD
   const priorityOptions = [
@@ -334,6 +336,28 @@ export default function BulkEditModal({
     }));
   };
 
+  // FUNCIÓN: Alternar expansión de tareas
+  const toggleTaskExpansion = (taskKey: string) => {
+    const newExpanded = new Set(expandedTasks);
+    if (newExpanded.has(taskKey)) {
+      newExpanded.delete(taskKey);
+    } else {
+      newExpanded.add(taskKey);
+    }
+    setExpandedTasks(newExpanded);
+  };
+
+  // FUNCIÓN: Alternar edición de subtareas
+  const toggleSubtaskEdit = (subtaskKey: string) => {
+    const newEditingSubtasks = new Set(editingSubtasks);
+    if (newEditingSubtasks.has(subtaskKey)) {
+      newEditingSubtasks.delete(subtaskKey);
+    } else {
+      newEditingSubtasks.add(subtaskKey);
+    }
+    setEditingSubtasks(newEditingSubtasks);
+  };
+
   // FUNCIÓN: Validar formulario
   const validateForm = (): string | null => {
     if (fieldsToUpdate.size === 0) {
@@ -434,6 +458,38 @@ export default function BulkEditModal({
         updates.subtaskUpdates = subtaskEdits;
       }
 
+      // Procesar cambios de grupos de tareas similares
+      const { similarGroups } = groupSimilarTasks();
+      const similarGroupUpdates: { [taskId: string]: any } = {};
+      
+      similarGroups.forEach(([groupKey, tasks], groupIndex) => {
+        const groupTitleKey = `group-${groupIndex}-title`;
+        const groupPriorityKey = `group-${groupIndex}-priority`;
+        const groupDescriptionKey = `group-${groupIndex}-description`;
+        
+        const hasGroupChanges = subtaskEdits[groupTitleKey] || 
+                               subtaskEdits[groupPriorityKey] || 
+                               subtaskEdits[groupDescriptionKey];
+        
+        if (hasGroupChanges) {
+          tasks.forEach(task => {
+            similarGroupUpdates[task.id] = {
+              ...(subtaskEdits[groupTitleKey] && { title: subtaskEdits[groupTitleKey] }),
+              ...(subtaskEdits[groupPriorityKey] && { priority: subtaskEdits[groupPriorityKey] }),
+              ...(subtaskEdits[groupDescriptionKey] && { description: subtaskEdits[groupDescriptionKey] })
+            };
+          });
+        }
+      });
+      
+      // Agregar actualizaciones de grupos similares
+      if (Object.keys(similarGroupUpdates).length > 0) {
+        if (!updates.individualUpdates) {
+          updates.individualUpdates = {};
+        }
+        Object.assign(updates.individualUpdates, similarGroupUpdates);
+      }
+
       console.log('🔍 BulkEditModal - Datos a enviar:');
       console.log('fieldsToUpdate:', Array.from(fieldsToUpdate));
       console.log('individualMode:', individualMode);
@@ -465,6 +521,221 @@ export default function BulkEditModal({
   // FUNCIÓN: Obtener nombres de etiquetas
   const getTagNames = (tagIds: string[]) => {
     return tagIds.map(id => tags.find(tag => tag.id === id)?.name).filter(Boolean).join(', ');
+  };
+
+  // FUNCIÓN: Agrupar tareas similares por título y datos
+  const groupSimilarTasks = () => {
+    const groups: { [key: string]: Task[] } = {};
+    
+    selectedTasks.forEach(task => {
+      // Crear una clave basada en título, prioridad, grupo y etiquetas
+      const groupKey = `${task.title.toLowerCase().trim()}-${task.priority}-${task.group?.id || 'no-group'}-${task.tags.map(t => t.tag.id).sort().join(',')}`;
+      
+      if (!groups[groupKey]) {
+        groups[groupKey] = [];
+      }
+      groups[groupKey].push(task);
+    });
+    
+    // Separar grupos similares (más de 1 tarea) de las diferentes
+    const similarGroups = Object.entries(groups).filter(([_, tasks]) => tasks.length > 1);
+    const differentTasks = Object.entries(groups).filter(([_, tasks]) => tasks.length === 1).map(([_, tasks]) => tasks[0]);
+    
+    return { similarGroups, differentTasks };
+  };
+
+
+  
+
+
+  // FUNCIÓN: Renderizar grupo de tareas similares
+  const renderSimilarTaskGroup = (tasks: Task[], groupIndex: number): JSX.Element => {
+    const representativeTask = tasks[0];
+    const hasSubtasks = tasks.some(task => task.subtasks && task.subtasks.length > 0);
+    const groupKey = `similar-group-${groupIndex}`;
+    const isExpanded = expandedTasks.has(groupKey);
+    
+    return (
+      <div key={groupKey} className="border border-gray-200 rounded-lg overflow-hidden mb-3">
+        {/* Encabezado del grupo */}
+        <div className="px-4 py-3 bg-green-50 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
+              <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              <span className="font-semibold text-green-800 text-base">
+                {representativeTask.title} ({tasks.length} tareas similares)
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            {/* Información del grupo */}
+            <div className="flex items-center space-x-2 text-sm text-green-700">
+              <span className="px-2 py-1 bg-green-100 rounded text-xs font-medium">
+                {getPriorityLabel(representativeTask.priority)}
+              </span>
+              {representativeTask.group && (
+                <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                  {representativeTask.group.name}
+                </span>
+              )}
+            </div>
+            
+            {/* Botón de expandir/contraer */}
+            <button
+              type="button"
+              onClick={() => {
+                const newExpanded = new Set(expandedTasks);
+                if (isExpanded) {
+                  newExpanded.delete(groupKey);
+                } else {
+                  newExpanded.add(groupKey);
+                }
+                setExpandedTasks(newExpanded);
+              }}
+              className="p-1 text-green-600 hover:text-green-800 transition-colors"
+            >
+              <svg 
+                className={`h-4 w-4 transform transition-transform ${
+                  isExpanded ? 'rotate-180' : ''
+                }`} 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        
+        {/* Contenido expandible */}
+        {isExpanded && (
+          <div className="bg-white">
+            {/* Formulario común para el grupo */}
+            <div className="px-4 py-4 border-b border-gray-200 bg-gray-50">
+              <h5 className="text-sm font-medium text-gray-900 mb-3">Editar todas las tareas del grupo:</h5>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Título común */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nuevo título
+                  </label>
+                  <input
+                    type="text"
+                    value={subtaskEdits[`group-${groupIndex}-title`] ?? representativeTask.title}
+                    onChange={(e) => updateSubtaskEdit('group', `${groupIndex}-title`, 'title', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    placeholder="Título común para todas las tareas"
+                  />
+                </div>
+
+                {/* Prioridad común */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Prioridad
+                  </label>
+                  <select
+                    value={subtaskEdits[`group-${groupIndex}-priority`] ?? representativeTask.priority}
+                    onChange={(e) => updateSubtaskEdit('group', `${groupIndex}-priority`, 'priority', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  >
+                    <option value="LOW">Baja</option>
+                    <option value="MEDIUM">Media</option>
+                    <option value="HIGH">Alta</option>
+                    <option value="URGENT">Urgente</option>
+                  </select>
+                </div>
+
+                {/* Descripción común */}
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Descripción
+                  </label>
+                  <textarea
+                    value={subtaskEdits[`group-${groupIndex}-description`] ?? representativeTask.description ?? ''}
+                    onChange={(e) => updateSubtaskEdit('group', `${groupIndex}-description`, 'description', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    rows={2}
+                    placeholder="Descripción común para todas las tareas"
+                  />
+                </div>
+              </div>
+              
+              {/* Indicador de cambios */}
+              {(subtaskEdits[`group-${groupIndex}-title`] || subtaskEdits[`group-${groupIndex}-priority`] || subtaskEdits[`group-${groupIndex}-description`]) && (
+                <div className="mt-3 flex items-center space-x-2 text-sm text-green-600">
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span>Cambios pendientes para {tasks.length} tareas similares</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Lista de tareas individuales simplificada */}
+            <div className="p-4">
+              <h5 className="text-sm font-medium text-gray-900 mb-3">Tareas padre ({tasks.length}):</h5>
+              <div className="space-y-2">
+                {tasks.map((task, taskIndex) => (
+                  <div key={task.id} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 rounded-full bg-green-400"></div>
+                        <span className="font-medium text-green-800 text-sm">
+                          {task.title} #{taskIndex + 1}
+                        </span>
+                        <span className="text-xs text-green-600">
+                          ID: {task.id.slice(0, 8)}...
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2 text-xs text-green-700">
+                        <span className="px-2 py-1 bg-green-100 rounded">
+                          {getPriorityLabel(task.priority)}
+                        </span>
+                        {task.subtasks && task.subtasks.length > 0 && (
+                          <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded">
+                            {task.subtasks.length} subtareas
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {/* Subtareas similares editables */}
+              {(() => {
+                // Recopilar todas las subtareas de todas las tareas similares
+                const allSubtasks: Task[] = [];
+                tasks.forEach(task => {
+                  if (task.subtasks && task.subtasks.length > 0) {
+                    task.subtasks.forEach(subtask => {
+                      allSubtasks.push({ ...subtask, parentId: task.id });
+                    });
+                  }
+                });
+                
+                if (allSubtasks.length === 0) return null;
+                
+                return (
+                  <div className="mt-6">
+                    <h5 className="text-sm font-medium text-gray-900 mb-3">
+                      Subtareas similares ({allSubtasks.length}):
+                    </h5>
+                    <div className="space-y-2">
+                      {allSubtasks.map(subtask => renderTaskHierarchy(subtask, 1))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // FUNCIÓN: Renderizar jerarquía de tareas de forma recursiva
@@ -704,6 +975,7 @@ export default function BulkEditModal({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
           >
@@ -1136,36 +1408,553 @@ export default function BulkEditModal({
                       </svg>
                       Gestión de Subtareas
                     </h4>
+                    
+                    {/* Selector de vista */}
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                      <button
+                        type="button"
+                        onClick={() => setSubtaskViewMode('hierarchy')}
+                        className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                          subtaskViewMode === 'hierarchy'
+                            ? 'bg-white text-gray-900 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        Vista Jerárquica
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubtaskViewMode('similar')}
+                        className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                          subtaskViewMode === 'similar'
+                            ? 'bg-white text-gray-900 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        Tareas Similares
+                      </button>
+                    </div>
                   </div>
                   
-                  {selectedTasks.filter(task => task.subtasks && task.subtasks.length > 0).length === 0 ? (
-                    <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-                      <svg className="h-12 w-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                      </svg>
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">No hay subtareas para editar</h3>
-                      <p className="text-gray-500 text-sm">
-                        Las tareas seleccionadas no tienen subtareas. Solo se mostrarán las tareas que contengan subtareas.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="bg-white border border-gray-200 rounded-lg max-h-96 overflow-y-auto">
-                      {selectedTasks
-                        .filter(task => {
-                          // Solo mostrar tareas que tienen subtareas
-                          if (!task.subtasks || task.subtasks.length === 0) return false;
-                          
-                          // Excluir tareas que son subtareas de otras tareas seleccionadas
-                          const isSubtaskOfSelected = selectedTasks.some(parentTask => 
-                            parentTask.id !== task.id && 
-                            parentTask.subtasks?.some(subtask => subtask.id === task.id)
-                          );
-                          
-                          return !isSubtaskOfSelected;
-                        })
-                        .map((task) => renderTaskHierarchy(task, 0))}
-                    </div>
+                  {/* Vista Jerárquica */}
+                  {subtaskViewMode === 'hierarchy' && (
+                    selectedTasks.filter(task => task.subtasks && task.subtasks.length > 0).length === 0 ? (
+                      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
+                        <svg className="h-12 w-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No hay subtareas para editar</h3>
+                        <p className="text-gray-500 text-sm">
+                          Las tareas seleccionadas no tienen subtareas. Solo se mostrarán las tareas que contengan subtareas.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="bg-white border border-gray-200 rounded-lg max-h-96 overflow-y-auto">
+                        {selectedTasks
+                          .filter(task => {
+                            // Solo mostrar tareas que tienen subtareas
+                            if (!task.subtasks || task.subtasks.length === 0) return false;
+                            
+                            // Excluir tareas que son subtareas de otras tareas seleccionadas
+                            const isSubtaskOfSelected = selectedTasks.some(parentTask => 
+                              parentTask.id !== task.id && 
+                              parentTask.subtasks?.some(subtask => subtask.id === task.id)
+                            );
+                            
+                            return !isSubtaskOfSelected;
+                          })
+                          .map((task) => renderTaskHierarchy(task, 0))}
+                      </div>
+                    )
                   )}
+                  
+                  {/* Vista de Tareas Similares */}
+                  {subtaskViewMode === 'similar' && (() => {
+                    const { similarGroups, differentTasks } = groupSimilarTasks();
+                    return (
+                      <div className="bg-white border border-gray-200 rounded-lg max-h-96 overflow-y-auto">
+                        <div className="p-4">
+                          <div className="mb-4">
+                            <p className="text-sm text-gray-600 mb-3">
+                              Se han encontrado tareas con títulos, prioridades, grupos y etiquetas similares. 
+                              Puedes editarlas en grupo para aplicar cambios a todas las tareas similares a la vez.
+                            </p>
+                          </div>
+                          
+                          {/* Subtareas similares con vista jerárquica */}
+                          {(() => {
+                            // Recopilar todas las subtareas de todas las tareas seleccionadas
+                            const allSubtasks: Task[] = [];
+                            selectedTasks.forEach(task => {
+                              if (task.subtasks && task.subtasks.length > 0) {
+                                task.subtasks.forEach(subtask => {
+                                  allSubtasks.push({ ...subtask, parentId: task.id });
+                                });
+                              }
+                            });
+                            
+                            if (allSubtasks.length === 0) {
+                              return (
+                                <div className="text-center py-8">
+                                  <svg className="h-12 w-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                  </svg>
+                                  <h3 className="text-lg font-medium text-gray-900 mb-2">No hay subtareas similares</h3>
+                                  <p className="text-gray-500 text-sm">
+                                    Las tareas seleccionadas no tienen subtareas para mostrar.
+                                  </p>
+                                </div>
+                              );
+                            }
+                            
+                            return (
+                              <div>
+                                <h5 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                                  <svg className="h-4 w-4 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                  </svg>
+                                  Subtareas Similares ({allSubtasks.length})
+                                </h5>
+                                
+                                <div className="bg-green-25 rounded-lg p-3 mb-4">
+                                  <p className="text-xs text-green-700 mb-1">
+                                    🌳 <strong>Vista jerárquica de subtareas similares:</strong>
+                                  </p>
+                                  <p className="text-xs text-green-600">
+                                    Todas las subtareas de las tareas seleccionadas. Estructura replicada exactamente de la sección de tareas únicas.
+                                  </p>
+                                </div>
+                                
+                                {/* Renderizado de subtareas similares editables */}
+                                <div className="space-y-3">
+                                  {allSubtasks.map(subtask => {
+                                    // Función renderTask replicada exactamente de tareas únicas
+                                    const renderTask = (currentTask: Task, level: number = 0): React.ReactNode => {
+                                      const hasSubtasks = currentTask.subtasks && currentTask.subtasks.length > 0;
+                                      const isExpanded = expandedTasks.has(currentTask.id);
+                                      
+                                      return (
+                                        <div key={currentTask.id} className={`${level > 0 ? 'ml-6 border-l-2 border-blue-200 pl-4' : ''}`}>
+                                          <div 
+                                            className={`bg-white rounded-lg border border-gray-200 p-4 mb-3 shadow-sm hover:shadow-md transition-all duration-300 ${
+                                              currentTask.completed ? 'opacity-75' : ''
+                                            }`}
+                                          >
+                                            <div className="flex items-start justify-between">
+                                              <div className="flex items-start space-x-3 flex-1">
+                                                {/* Botón de expandir/colapsar para subtareas con sub-subtareas */}
+                                                {hasSubtasks && (
+                                                  <button
+                                                    onClick={(e) => {
+                                                      e.preventDefault();
+                                                      e.stopPropagation();
+                                                      const newExpanded = new Set(expandedTasks);
+                                                      if (isExpanded) {
+                                                        newExpanded.delete(currentTask.id);
+                                                      } else {
+                                                        newExpanded.add(currentTask.id);
+                                                      }
+                                                      setExpandedTasks(newExpanded);
+                                                    }}
+                                                    className="mt-1 p-1 hover:bg-gray-100 rounded transition-colors"
+                                                  >
+                                                    {isExpanded ? (
+                                                      <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                      </svg>
+                                                    ) : (
+                                                      <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                                      </svg>
+                                                    )}
+                                                  </button>
+                                                )}
+
+                                                {/* Contenido principal de la subtarea */}
+                                                <div className="flex-1 min-w-0">
+                                                  {/* Título editable de la subtarea */}
+                                                  <div className="flex items-center space-x-2 mb-3">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={subtaskEdits[currentTask.id]?.completed ?? currentTask.completed}
+                                                      onChange={(e) => {
+                                                        setSubtaskEdits(prev => ({
+                                                          ...prev,
+                                                          [currentTask.id]: {
+                                                            ...prev[currentTask.id],
+                                                            completed: e.target.checked
+                                                          }
+                                                        }));
+                                                      }}
+                                                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                    />
+                                                    <input
+                                                      type="text"
+                                                      value={subtaskEdits[currentTask.id]?.title ?? currentTask.title}
+                                                      onChange={(e) => {
+                                                        setSubtaskEdits(prev => ({
+                                                          ...prev,
+                                                          [currentTask.id]: {
+                                                            ...prev[currentTask.id],
+                                                            title: e.target.value
+                                                          }
+                                                        }));
+                                                      }}
+                                                      className="flex-1 text-sm font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white rounded px-2 py-1"
+                                                      placeholder="Título de la subtarea"
+                                                    />
+                                                  </div>
+
+                                                  {/* Campos editables adicionales */}
+                                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                                                    {/* Prioridad */}
+                                                    <div>
+                                                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                        Prioridad
+                                                      </label>
+                                                      <select
+                                                        value={subtaskEdits[currentTask.id]?.priority ?? currentTask.priority}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              priority: e.target.value as 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                      >
+                                                        <option value="LOW">Baja</option>
+                                                        <option value="MEDIUM">Media</option>
+                                                        <option value="HIGH">Alta</option>
+                                                        <option value="URGENT">Urgente</option>
+                                                      </select>
+                                                    </div>
+
+                                                    {/* Fecha de inicio */}
+                                                    <div>
+                                                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                        Fecha de inicio
+                                                      </label>
+                                                      <input
+                                                        type="date"
+                                                        value={subtaskEdits[currentTask.id]?.startDate ?? (currentTask.startDate ? new Date(currentTask.startDate).toISOString().split('T')[0] : '')}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              startDate: e.target.value
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                      />
+                                                    </div>
+
+                                                    {/* Fecha de vencimiento */}
+                                                    <div>
+                                                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                        Fecha de vencimiento
+                                                      </label>
+                                                      <input
+                                                        type="date"
+                                                        value={subtaskEdits[currentTask.id]?.dueDate ?? (currentTask.dueDate ? new Date(currentTask.dueDate).toISOString().split('T')[0] : '')}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              dueDate: e.target.value
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                      />
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Descripción */}
+                                                  <div className="mb-3">
+                                                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                      Descripción
+                                                    </label>
+                                                    <textarea
+                                                      value={subtaskEdits[currentTask.id]?.description ?? currentTask.description ?? ''}
+                                                      onChange={(e) => {
+                                                        setSubtaskEdits(prev => ({
+                                                          ...prev,
+                                                          [currentTask.id]: {
+                                                            ...prev[currentTask.id],
+                                                            description: e.target.value
+                                                          }
+                                                        }));
+                                                      }}
+                                                      className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                      rows={2}
+                                                      placeholder="Descripción de la subtarea"
+                                                    />
+                                                  </div>
+
+                                                  {/* Indicador de cambios */}
+                                                  {subtaskEdits[currentTask.id] && (
+                                                    <div className="flex items-center space-x-2 text-xs text-blue-600">
+                                                      <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                                      </svg>
+                                                      <span>Cambios pendientes de guardar</span>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          {/* Renderizado recursivo de sub-subtareas - máximo 3 niveles */}
+                                          {hasSubtasks && isExpanded && level < 2 && (
+                                            <div className="mt-2 space-y-1">
+                                              {currentTask.subtasks?.map(subSubtask => renderTask(subSubtask, level + 1))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    };
+                                    
+                                    return renderTask(subtask, 0);
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          
+                          {/* Tareas únicas con vista jerárquica */}
+                          {differentTasks.length > 0 && (
+                            <div className="mt-6 pt-4 border-t border-gray-200">
+                              <h5 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                                <svg className="h-4 w-4 mr-2 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                </svg>
+                                Tareas Únicas ({differentTasks.length})
+                              </h5>
+                              
+                              <div className="bg-orange-25 rounded-lg p-3 mb-4">
+                                <p className="text-xs text-orange-700 mb-1">
+                                  🌳 <strong>Vista jerárquica de tareas únicas:</strong>
+                                </p>
+                                <p className="text-xs text-orange-600">
+                                  Estas tareas no tienen similares. Estructura de árbol replicada exactamente de TaskList.tsx.
+                                </p>
+                              </div>
+                              
+                              {/* Renderizado simplificado de tareas únicas con subtareas editables */}
+                              <div className="space-y-3">
+                                {differentTasks.filter(task => !task.parentId).map(task => {
+                                  // Función renderTask simplificada para tareas padre y subtareas editables
+                                  const renderTask = (currentTask: Task, level: number = 0): React.ReactNode => {
+                                    const hasSubtasks = currentTask.subtasks && currentTask.subtasks.length > 0;
+                                    const isExpanded = expandedTasks.has(currentTask.id);
+                                    const isParentTask = level === 0;
+                                    
+                                    return (
+                                      <div key={currentTask.id} className={`${level > 0 ? 'ml-6 border-l-2 border-blue-200 pl-4' : ''}`}>
+                                        <div 
+                                          className={`${
+                                            isParentTask 
+                                              ? 'bg-gray-50 rounded-lg border border-gray-300 p-3 mb-3' 
+                                              : 'bg-white rounded-lg border border-gray-200 p-4 mb-3 shadow-sm hover:shadow-md transition-all duration-300'
+                                          } ${
+                                            currentTask.completed ? 'opacity-75' : ''
+                                          }`}
+                                        >
+                                          <div className="flex items-start justify-between">
+                                            <div className="flex items-start space-x-3 flex-1">
+                                              {/* Botón de expandir/colapsar para tareas con subtareas */}
+                                              {hasSubtasks && (
+                                                <button
+                                                  onClick={(e) => {
+                                                    e.preventDefault();
+                                                    e.stopPropagation();
+                                                    const newExpanded = new Set(expandedTasks);
+                                                    if (isExpanded) {
+                                                      newExpanded.delete(currentTask.id);
+                                                    } else {
+                                                      newExpanded.add(currentTask.id);
+                                                    }
+                                                    setExpandedTasks(newExpanded);
+                                                  }}
+                                                  className="mt-1 p-1 hover:bg-gray-100 rounded transition-colors"
+                                                >
+                                                  {isExpanded ? (
+                                                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                    </svg>
+                                                  ) : (
+                                                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                                    </svg>
+                                                  )}
+                                                </button>
+                                              )}
+
+                                              {/* Contenido principal de la tarea */}
+                                              <div className="flex-1 min-w-0">
+                                                {isParentTask ? (
+                                                  // Vista simplificada para tareas padre
+                                                  <div className="flex items-center space-x-2">
+                                                    <h3 className="text-sm font-medium text-gray-700">
+                                                      {currentTask.title}
+                                                    </h3>
+                                                    {hasSubtasks && (
+                                                      <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                                                        {currentTask.subtasks.filter(st => st.completed).length}/{currentTask.subtasks.length} subtareas
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  // Vista completa y editable para subtareas
+                                                  <div>
+                                                    {/* Título editable de la subtarea */}
+                                                    <div className="flex items-center space-x-2 mb-3">
+                                                      <input
+                                                        type="checkbox"
+                                                        checked={subtaskEdits[currentTask.id]?.completed ?? currentTask.completed}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              completed: e.target.checked
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200"
+                                                      />
+                                                      <input
+                                                        type="text"
+                                                        value={subtaskEdits[currentTask.id]?.title ?? currentTask.title}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              title: e.target.value
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="flex-1 text-sm font-medium border-0 border-b border-gray-300 focus:border-blue-500 focus:ring-0 bg-transparent px-0 py-1"
+                                                        placeholder="Título de la subtarea"
+                                                      />
+                                                    </div>
+
+                                                    {/* Descripción editable */}
+                                                    <div className="mb-3">
+                                                      <textarea
+                                                        value={subtaskEdits[currentTask.id]?.description ?? currentTask.description ?? ''}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              description: e.target.value
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="w-full text-xs text-gray-600 border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none"
+                                                        placeholder="Descripción de la subtarea"
+                                                        rows={2}
+                                                      />
+                                                    </div>
+
+                                                    {/* Controles editables en línea */}
+                                                    <div className="flex items-center space-x-3 text-xs">
+                                                      {/* Prioridad editable */}
+                                                      <select
+                                                        value={subtaskEdits[currentTask.id]?.priority ?? currentTask.priority}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              priority: e.target.value as 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="text-xs border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                                      >
+                                                        <option value="LOW">Baja</option>
+                                                        <option value="MEDIUM">Media</option>
+                                                        <option value="HIGH">Alta</option>
+                                                        <option value="URGENT">Urgente</option>
+                                                      </select>
+
+                                                      {/* Fecha de inicio editable */}
+                                                      <input
+                                                        type="date"
+                                                        value={subtaskEdits[currentTask.id]?.startDate ?? currentTask.startDate ?? ''}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              startDate: e.target.value
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="text-xs border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                                      />
+
+                                                      {/* Fecha de vencimiento editable */}
+                                                      <input
+                                                        type="date"
+                                                        value={subtaskEdits[currentTask.id]?.dueDate ?? currentTask.dueDate ?? ''}
+                                                        onChange={(e) => {
+                                                          setSubtaskEdits(prev => ({
+                                                            ...prev,
+                                                            [currentTask.id]: {
+                                                              ...prev[currentTask.id],
+                                                              dueDate: e.target.value
+                                                            }
+                                                          }));
+                                                        }}
+                                                        className="text-xs border border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                                      />
+                                                    </div>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Renderizado recursivo de subtareas cuando la tarea está expandida - máximo 2 niveles */}
+                                        {hasSubtasks && isExpanded && level <= 1 && (
+                                          <div className="ml-4">
+                                            {currentTask.subtasks && currentTask.subtasks
+                                              .filter(subtask => {
+                                                // Filtrar subtareas que ya aparecen en grupos similares
+                                                const { similarGroups } = groupSimilarTasks();
+                                                const isInSimilarGroup = similarGroups.some(([groupKey, tasks]) => 
+                                                  tasks.some(task => task.id === subtask.id)
+                                                );
+                                                return !isInSimilarGroup;
+                                              })
+                                              .map(subtask => renderTask(subtask, level + 1))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  };
+                                  
+                                  return renderTask(task, 0);
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Resumen de cambios */}
                   {Object.keys(subtaskEdits).length > 0 && (
@@ -1185,6 +1974,8 @@ export default function BulkEditModal({
                   )}
                 </div>
               )}
+
+
             </div>
           </form>
         </div>
@@ -1203,7 +1994,7 @@ export default function BulkEditModal({
               Cancelar
             </button>
             <button
-              onClick={handleSubmit}
+              type="submit"
               disabled={isLoading || fieldsToUpdate.size === 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
             >
