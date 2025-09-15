@@ -63,6 +63,33 @@
      - Comprobar el comportamiento en diferentes navegadores
      - Identificar si el problema afecta solo a espacios o a otros caracteres especiales
 
+7. **🚨 URGENTE - En las subtareas de 2do nivel no me deja eliminarlas**
+   - **Descripción:** Las subtareas de segundo nivel (subtareas anidadas) no pueden ser eliminadas desde la interfaz
+   - **Comportamiento esperado:** Debería permitir eliminar subtareas de cualquier nivel de anidación
+   - **Comportamiento actual:** La funcionalidad de eliminación no funciona para subtareas de segundo nivel
+   - **Impacto:** Imposibilidad de gestionar correctamente la estructura de subtareas anidadas
+   - **Prioridad:** 🚨 URGENTE
+   - **Fecha identificada:** 2025-01-15
+   - **Área afectada:** Sistema de eliminación de subtareas, interfaz de gestión de tareas anidadas
+
+8. **🚨 URGENTE - En las tareas de 2do nivel no me deja agregar espacios**
+   - **Descripción:** En las tareas de segundo nivel no es posible agregar espacios en los nombres
+   - **Comportamiento esperado:** Debería permitir ingresar espacios normalmente en tareas de cualquier nivel
+   - **Comportamiento actual:** Los espacios no se registran en tareas de segundo nivel
+   - **Impacto:** Limitación severa en la capacidad de crear nombres descriptivos para tareas anidadas
+   - **Prioridad:** 🚨 URGENTE
+   - **Fecha identificada:** 2025-01-15
+   - **Área afectada:** Formularios de edición de tareas de segundo nivel
+
+9. **🚨 URGENTE - En las tareas de 2do nivel tampoco me deja actualizar**
+   - **Descripción:** Las tareas de segundo nivel no permiten actualizaciones de ningún tipo
+   - **Comportamiento esperado:** Debería permitir actualizar cualquier campo de las tareas de segundo nivel
+   - **Comportamiento actual:** La funcionalidad de actualización está completamente bloqueada para tareas de segundo nivel
+   - **Impacto:** Imposibilidad total de gestionar y mantener tareas de segundo nivel
+   - **Prioridad:** 🚨 URGENTE
+   - **Fecha identificada:** 2025-01-15
+   - **Área afectada:** Sistema completo de edición y actualización de tareas anidadas
+
 ---
 
 ## Mejoras Propuestas
@@ -208,6 +235,55 @@
   - Interfaz intuitiva para selección y configuración
   - Validación de estructura de tareas y subtareas
   - Integración con el sistema actual de grupos y tareas
+
+### 11. Historial de actividades y comentarios para grupos
+- **Descripción:** Dentro de la sección de productividad de los grupos, agregar un historial de actividades y comentarios que se apliquen en general para el grupo
+- **Objetivo:** Proporcionar un registro centralizado de todas las actividades relevantes del grupo y permitir colaboración mediante comentarios
+- **Beneficio:** Mejorar el seguimiento del progreso del grupo, facilitar la comunicación del equipo y mantener un registro histórico de eventos importantes
+- **Prioridad:** Media-Alta
+- **Fecha propuesta:** 2025-01-15
+- **Estado:** Planificado (no se trabajará de momento)
+- **Análisis de actividades sugeridas basado en la estructura actual del proyecto:**
+  - **Eventos de gestión del grupo:**
+    - Creación del grupo
+    - Modificación de nombre o descripción del grupo
+    - Cambios en la configuración del grupo
+    - Eliminación del grupo
+  - **Actividades relacionadas con tareas:**
+    - Creación de nuevas tareas dentro del grupo
+    - Completado de tareas importantes o hitos
+    - Modificación masiva de tareas del grupo
+    - Eliminación de tareas del grupo
+    - Cambios de prioridad en tareas críticas
+    - Reasignación de fechas límite importantes
+  - **Actividades de miembros y colaboración:**
+    - Adición de nuevos miembros al grupo (cuando se implemente sistema de usuarios)
+    - Remoción de miembros del grupo
+    - Cambios de roles o permisos dentro del grupo
+    - Comentarios generales sobre el progreso del grupo
+  - **Eventos de estado y progreso:**
+    - Cambios en el estado general del grupo (activo, pausado, completado)
+    - Alcance de hitos o porcentajes de completado
+    - Alertas de retrasos o problemas en el grupo
+    - Notificaciones de fechas límite próximas a nivel de grupo
+  - **Actividades de análisis y productividad:**
+    - Generación de reportes de productividad del grupo
+    - Análisis de tiempo estimado vs tiempo real del grupo
+    - Identificación de patrones de retraso o eficiencia
+    - Comentarios sobre mejoras o ajustes en la metodología del grupo
+- **Funcionalidades propuestas:**
+  - Timeline cronológico de actividades del grupo
+  - Sistema de comentarios con timestamps
+  - Filtros por tipo de actividad
+  - Notificaciones de actividades importantes
+  - Exportación del historial para análisis
+  - Integración con el sistema actual de ActivityLog
+- **Consideraciones técnicas:**
+  - Extensión del modelo ActivityLog para incluir actividades a nivel de grupo
+  - Sistema de comentarios con referencias al grupo
+  - Interfaz de timeline visual e intuitiva
+  - Permisos y roles para comentarios y visualización del historial
+  - Optimización de consultas para grupos con mucha actividad
 
 ---
 
