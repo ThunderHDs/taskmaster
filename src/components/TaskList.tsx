@@ -118,6 +118,12 @@ const TaskList: React.FC<TaskListProps> = ({
   /** Estado que controla qué tareas están expandidas (mostrando subtareas) */
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   
+  // Debug: Monitorear cambios en las tareas
+  useEffect(() => {
+    console.log('🔄 TaskList re-renderizado con', tasks.length, 'tareas');
+    console.log('🔄 Tareas actuales:', tasks.map(t => ({ id: t.id, title: t.title, subtasks: t.subtasks?.length || 0 })));
+  }, [tasks]);
+  
   /** Estado que rastrea sobre qué tarea está el cursor (hover effect) */
   const [hoveredTask, setHoveredTask] = useState<string | null>(null);
   
@@ -1354,7 +1360,7 @@ const TaskList: React.FC<TaskListProps> = ({
                 
                 {/* Dropdown del menú contextual */}
                 {openMenus.has(task.id) && (
-                  <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-md shadow-lg z-10 min-w-[100px]">
+                  <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-md shadow-lg z-50 min-w-[100px]">
                     {/* Opción de editar tarea */}
                     <button
                       onClick={(e) => {
@@ -1367,7 +1373,8 @@ const TaskList: React.FC<TaskListProps> = ({
                     </button>
                     {/* Opción de eliminar tarea */}
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         onTaskDelete(task.id); // Eliminar tarea
                         setOpenMenus(new Set()); // Cerrar menú
                       }}

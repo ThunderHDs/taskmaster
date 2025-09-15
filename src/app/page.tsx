@@ -82,6 +82,9 @@ const HomePage: React.FC = () => {
   const [showGroupManager, setShowGroupManager] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [parentTask, setParentTask] = useState<Task | null>(null);
+  
+  // Force re-render state
+  const [forceRerender, setForceRerender] = useState(0);
 
   // Delete modal states
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -1008,14 +1011,44 @@ const HomePage: React.FC = () => {
       }
 
       // Remove task from state
+      console.log('🔍 Estado antes de eliminar:', tasks.length, 'tareas');
+      console.log('🔍 Eliminando tarea con ID:', taskToDelete.id);
+      console.log('🔍 Tarea a eliminar:', taskToDelete);
+      
       setTasks(prevTasks => {
-        return prevTasks
-          .filter(task => task.id !== taskToDelete.id)
-          .map(task => ({
-            ...task,
-            subtasks: (task.subtasks || []).filter(subtask => subtask.id !== taskToDelete.id)
-          }));
+        console.log('🔍 Estado previo en setTasks:', prevTasks.length, 'tareas');
+        
+        const filteredTasks = prevTasks.filter(task => task.id !== taskToDelete.id);
+        console.log('🔍 Después de filtrar tareas principales:', filteredTasks.length, 'tareas');
+        
+        // Función recursiva para eliminar subtareas anidadas
+        const removeTaskRecursively = (tasks: Task[], targetId: string): Task[] => {
+          return tasks
+            .filter(task => task.id !== targetId)
+            .map(task => ({
+              ...task,
+              subtasks: removeTaskRecursively(task.subtasks || [], targetId)
+            }));
+        };
+        
+        const updatedTasks = removeTaskRecursively(filteredTasks, taskToDelete.id);
+        
+        console.log('🔍 Estado final después de eliminar subtareas:', updatedTasks.length, 'tareas');
+        console.log('🔍 Tareas actualizadas:', updatedTasks.map(t => ({ id: t.id, title: t.title, subtasks: t.subtasks?.length || 0 })));
+        
+        // Verificar si la tarea eliminada realmente se removió
+        const taskStillExists = updatedTasks.some(t => t.id === taskToDelete.id);
+        const subtaskStillExists = updatedTasks.some(t => 
+          t.subtasks && t.subtasks.some(st => st.id === taskToDelete.id)
+        );
+        console.log('🔍 ¿Tarea principal aún existe?:', taskStillExists);
+        console.log('🔍 ¿Subtarea aún existe?:', subtaskStillExists);
+        
+        return updatedTasks;
       });
+      
+      // Forzar re-renderizado completo
+      setForceRerender(prev => prev + 1);
 
       setShowDeleteModal(false);
       setTaskToDelete(null);
@@ -1709,6 +1742,7 @@ const HomePage: React.FC = () => {
               {/* Task List */}
               <div>
                 <TaskList
+              key={`main-tasklist-${tasks.length}-${forceRerender}`}
               tasks={filteredTasks}
               onTaskToggle={handleTaskToggle}
               onTaskEdit={handleTaskEdit}
@@ -1748,6 +1782,7 @@ const HomePage: React.FC = () => {
                         Tareas sin fecha definida
                       </h3>
                       <TaskList
+                        key={`no-date-tasklist-${tasksWithoutDate.length}-${forceRerender}`}
                         tasks={tasksWithoutDate}
                         onTaskToggle={handleTaskToggle}
                         onTaskEdit={handleTaskEdit}
@@ -1909,6 +1944,7 @@ const HomePage: React.FC = () => {
             <div className="flex gap-6">
               <div className="flex-1">
                 <TaskList
+                  key={`list-view-tasklist-${filteredTasks.length}-${forceRerender}`}
                   tasks={filteredTasks}
                   onTaskToggle={handleTaskToggle}
                   onTaskEdit={handleTaskEdit}

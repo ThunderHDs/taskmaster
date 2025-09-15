@@ -63,7 +63,7 @@
      - Comprobar el comportamiento en diferentes navegadores
      - Identificar si el problema afecta solo a espacios o a otros caracteres especiales
 
-7. **🚨 URGENTE - En las subtareas de 2do nivel no me deja eliminarlas**
+7. **✅ RESUELTO - En las subtareas de 2do nivel no me deja eliminarlas** - Implementada eliminación recursiva
    - **Descripción:** Las subtareas de segundo nivel (subtareas anidadas) no pueden ser eliminadas desde la interfaz
    - **Comportamiento esperado:** Debería permitir eliminar subtareas de cualquier nivel de anidación
    - **Comportamiento actual:** La funcionalidad de eliminación no funciona para subtareas de segundo nivel
