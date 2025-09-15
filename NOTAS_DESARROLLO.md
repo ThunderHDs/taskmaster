@@ -170,11 +170,62 @@
   - Implementar rollback en caso de errores durante la aplicación masiva
   - Registrar en el historial de actividades los cambios realizados en cada subtarea
 
+### 9. Sección de productividad, estadísticas y estatus de grupos
+- **Descripción:** Agregar una sección de productividad, estadísticas y estatus de los grupos, a modo de proyecto, que sea visual, práctica y sencilla
+- **Objetivo:** Proporcionar una vista general del rendimiento y progreso de los grupos de tareas de manera visual e intuitiva
+- **Beneficio:** Permitir un mejor seguimiento del progreso de proyectos y análisis de productividad a nivel de grupo
+- **Prioridad:** Media
+- **Fecha propuesta:** 2025-01-15
+- **Estado:** Planificado (no se trabajará de momento)
+- **Funcionalidades propuestas:**
+  - Dashboard visual con métricas de productividad por grupo
+  - Gráficos de progreso y estadísticas de completado
+  - Indicadores de estatus y salud de cada grupo/proyecto
+  - Métricas de tiempo estimado vs tiempo real
+  - Vista comparativa entre diferentes grupos
+- **Consideraciones de diseño:**
+  - Interfaz visual, práctica y sencilla
+  - Gráficos y visualizaciones claras
+  - Información resumida y de fácil comprensión
+  - Integración fluida con el sistema actual de grupos
+
+### 10. Sistema de plantillas de grupos
+- **Descripción:** Crear un sistema de plantillas de grupos con tareas y subtareas ya predefinidas, que se seleccione el tipo de grupo según se necesite, con la cantidad de tareas a especificar por el usuario, y los nombres de estas tareas
+- **Objetivo:** Facilitar la creación rápida de grupos de tareas basados en plantillas predefinidas para diferentes tipos de proyectos
+- **Beneficio:** Acelerar la configuración inicial de proyectos y estandarizar estructuras de trabajo comunes
+- **Prioridad:** Media
+- **Fecha propuesta:** 2025-01-15
+- **Estado:** Planificado (no se trabajará de momento)
+- **Funcionalidades propuestas:**
+  - Biblioteca de plantillas predefinidas por tipo de proyecto
+  - Selector de tipo de grupo/plantilla
+  - Configuración de cantidad de tareas por el usuario
+  - Personalización de nombres de tareas durante la creación
+  - Estructura de subtareas predefinida según el tipo de plantilla
+  - Opción de guardar configuraciones personalizadas como nuevas plantillas
+- **Consideraciones técnicas:**
+  - Sistema de templates flexible y extensible
+  - Interfaz intuitiva para selección y configuración
+  - Validación de estructura de tareas y subtareas
+  - Integración con el sistema actual de grupos y tareas
+
 ---
 
 ## Notas Técnicas
 
-_Pendiente de agregar..._
+### Mejoras en Logs de Actividad
+
+- **Hay logs dentro del histórico de actividades, que no dan información de las tareas actualizadas, solo dice "Se actualizó la tarea" pero no dice cuál, ni qué se actualizó, vamos a prestar atención a eso...**
+  - **Descripción:** Los logs actuales en el historial de actividades son muy genéricos y no proporcionan información específica sobre qué tarea fue modificada ni qué campos fueron actualizados
+  - **Impacto:** Dificulta el seguimiento detallado de cambios y la auditoría de modificaciones
+  - **Prioridad:** Media
+  - **Fecha identificada:** 2025-01-15
+  - **Área afectada:** Sistema de logging, historial de actividades
+  - **Mejora propuesta:** Implementar logs más descriptivos que incluyan:
+    - Nombre específico de la tarea modificada
+    - Campos que fueron actualizados
+    - Valores anteriores y nuevos (cuando sea relevante)
+    - Contexto adicional de la modificación
 
 ---
 
