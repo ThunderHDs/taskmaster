@@ -638,12 +638,32 @@ const HomePage: React.FC = () => {
         body: JSON.stringify({ completed }),
       });
 
+      console.log(`API Response status: ${response.status}, ok: ${response.ok}`);
+      
       if (!response.ok) {
         let errorMessage = 'Failed to update task';
         try {
-          const errorData = await response.json();
+          const responseText = await response.text();
+          let errorData;
+          
+          if (responseText) {
+            try {
+              errorData = JSON.parse(responseText);
+            } catch {
+              errorData = { message: responseText };
+            }
+          } else {
+            errorData = { message: 'Empty response from server' };
+          }
+          
+          console.error('API Error Response:', {
+            status: response.status,
+            statusText: response.statusText,
+            responseText: responseText,
+            errorData: errorData
+          });
+          
           errorMessage = errorData.error || errorData.message || errorMessage;
-          console.error('API Error Response:', errorData);
         } catch (parseError) {
           console.error('Failed to parse error response:', parseError);
           errorMessage = `HTTP ${response.status}: ${response.statusText}`;
