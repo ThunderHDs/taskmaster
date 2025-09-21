@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { Plus, Filter, Tag as TagIcon, Search, Settings, RefreshCw, Calendar as CalendarIcon, Clock, Users, CheckSquare, Edit } from 'lucide-react';
 import { isSameDay, isWithinInterval, startOfWeek, endOfWeek, isSameMonth } from 'date-fns';
 import Link from 'next/link';
@@ -19,6 +20,11 @@ import Calendar from '@/components/Calendar';
 import { TaskFilters } from '@/components/TaskFilters';
 import { useUndoRedo } from '@/hooks/useUndoRedo';
 import UndoToast from '@/components/UndoToast';
+import { useFilterStore } from '@/stores/useFilterStore';
+import { useUIStore } from '@/stores/useUIStore';
+import { useTaskStore } from '@/stores/useTaskStore';
+import { canHaveSubtasks } from '@/lib/utils';
+import { logger } from '@/lib/logger';
 
 // Interfaces
 interface Tag {
@@ -78,11 +84,21 @@ const HomePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Modal states
-  const [showTaskForm, setShowTaskForm] = useState(false);
-  const [showTagManager, setShowTagManager] = useState(false);
-  const [showGroupManager, setShowGroupManager] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  // Modal states (using UIStore)
+  const {
+    modals: {
+      isTaskFormOpen,
+      isTagManagerOpen,
+      isGroupManagerOpen,
+      editingTask
+    },
+    openTaskForm,
+    closeTaskForm,
+    openTagManager,
+    closeTagManager,
+    openGroupManager,
+    closeGroupManager
+  } = useUIStore();
   const [parentTask, setParentTask] = useState<Task | null>(null);
   
   // Force re-render state
@@ -114,54 +130,25 @@ const HomePage: React.FC = () => {
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
-  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
-  const [selectedPriorities, setSelectedPriorities] = useState<Set<string>>(new Set());
-  const [showCompleted, setShowCompleted] = useState(false);
-  const [showOverdue, setShowOverdue] = useState(false);
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const {
+    selectedTags,
+    selectedGroups,
+    selectedPriorities,
+    showCompleted,
+    showOverdue,
+    dateFilter
+  } = useFilterStore();
+
+  // Task store
+  const { setTasks: setTasksInStore, setAvailableTags: setTagsInStore, setAvailableGroups: setGroupsInStore } = useTaskStore();
 
   const [showFilters, setShowFilters] = useState(false);
-  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  // Multi-select mode - usando el store
+  const { isMultiSelectMode, setIsMultiSelectMode } = useTaskStore();
 
-  // Handlers para TaskFilters
-  const handleTagFilterChange = (tagId: string) => {
-    const newSelectedTags = new Set(selectedTags);
-    if (newSelectedTags.has(tagId)) {
-      newSelectedTags.delete(tagId);
-    } else {
-      newSelectedTags.add(tagId);
-    }
-    setSelectedTags(newSelectedTags);
-  };
-
-  const handleGroupFilterChange = (groupId: string) => {
-    const newSelectedGroups = new Set(selectedGroups);
-    if (newSelectedGroups.has(groupId)) {
-      newSelectedGroups.delete(groupId);
-    } else {
-      newSelectedGroups.add(groupId);
-    }
-    setSelectedGroups(newSelectedGroups);
-  };
-
-  const handlePriorityFilterChange = (priority: string) => {
-    const newSelectedPriorities = new Set(selectedPriorities);
-    if (newSelectedPriorities.has(priority)) {
-      newSelectedPriorities.delete(priority);
-    } else {
-      newSelectedPriorities.add(priority);
-    }
-    setSelectedPriorities(newSelectedPriorities);
-  };
-
+  // Clear search query (filters are handled by store)
   const clearAllFilters = () => {
-    setSelectedTags(new Set());
-    setSelectedGroups(new Set());
-    setSelectedPriorities(new Set());
-    setShowCompleted(false);
-    setShowOverdue(false);
-    setDateFilter('all');
+    useFilterStore.getState().clearAllFilters();
     setSearchQuery('');
   };
 
@@ -169,8 +156,8 @@ const HomePage: React.FC = () => {
   const [isCalendarMode, setIsCalendarMode] = useState(false);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<Date>(new Date());
   
-  // Group view states
-  const [isGroupedView, setIsGroupedView] = useState(false);
+  // Group view states - usando el store
+  const { isGroupedView, setIsGroupedView } = useTaskStore();
 
   // Undo/Redo functionality
   const { 
@@ -189,6 +176,22 @@ const HomePage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Sincronizar tasks con el store de Zustand cuando cambien
+  useEffect(() => {
+    console.log('🔄 SYNC: Updating Zustand store with', tasks.length, 'tasks');
+    setTasksInStore(tasks);
+  }, [tasks, setTasksInStore]);
+
+  // Sincronizar tags con el store de Zustand cuando cambien
+  useEffect(() => {
+    setTagsInStore(tags);
+  }, [tags, setTagsInStore]);
+
+  // Sincronizar groups con el store de Zustand cuando cambien
+  useEffect(() => {
+    setGroupsInStore(groups);
+  }, [groups, setGroupsInStore]);
 
   // Load tasks, tags and groups from API
   const loadData = async () => {
@@ -212,11 +215,11 @@ const HomePage: React.FC = () => {
           const text = await tasksResponse.text();
           tasksData = text ? JSON.parse(text) : [];
         } catch (parseError) {
-          console.error('Error parsing tasks response:', parseError);
+          logger.error('Error parsing tasks response:', parseError);
           tasksData = [];
         }
       } else {
-        console.error('Tasks API failed:', tasksResponse.status, tasksResponse.statusText);
+        logger.error('Tasks API failed:', tasksResponse.status, tasksResponse.statusText);
       }
       
       if (tagsResponse.ok) {
@@ -224,11 +227,11 @@ const HomePage: React.FC = () => {
           const text = await tagsResponse.text();
           tagsData = text ? JSON.parse(text) : [];
         } catch (parseError) {
-          console.error('Error parsing tags response:', parseError);
+          logger.error('Error parsing tags response:', parseError);
           tagsData = [];
         }
       } else {
-        console.error('Tags API failed:', tagsResponse.status, tagsResponse.statusText);
+        logger.error('Tags API failed:', tagsResponse.status, tagsResponse.statusText);
       }
       
       if (groupsResponse.ok) {
@@ -236,18 +239,20 @@ const HomePage: React.FC = () => {
           const text = await groupsResponse.text();
           groupsData = text ? JSON.parse(text) : [];
         } catch (parseError) {
-          console.error('Error parsing groups response:', parseError);
+          logger.error('Error parsing groups response:', parseError);
           groupsData = [];
         }
       } else {
-        console.error('Groups API failed:', groupsResponse.status, groupsResponse.statusText);
+        logger.error('Groups API failed:', groupsResponse.status, groupsResponse.statusText);
       }
       
       setTasks(tasksData);
       setTags(tagsData);
       setGroups(groupsData);
+      
+      // Removed synchronous store updates - now handled by useEffect
     } catch (error) {
-      console.error('Error loading data:', error);
+      logger.error('Error loading data:', error);
       setError('Failed to load data. Please try again.');
     } finally {
       setLoading(false);
@@ -257,7 +262,7 @@ const HomePage: React.FC = () => {
   // Bulk edit function
   const handleBulkEdit = async (taskIds: string[], updates: any) => {
     try {
-      console.log('handleBulkEdit called with:', { taskIds, updates });
+      logger.debug('handleBulkEdit called with:', { taskIds, updates });
       
       const requestBody = {
         taskIds,
@@ -314,7 +319,7 @@ const HomePage: React.FC = () => {
       
 
     } catch (error) {
-      console.error('Error updating tasks:', error);
+      logger.error('Error updating tasks:', error);
       setError(error instanceof Error ? error.message : 'Error al actualizar las tareas');
       throw error;
     }
@@ -348,15 +353,17 @@ const HomePage: React.FC = () => {
       const result = await response.json();
       
       // Agregar las nuevas tareas al estado
-      setTasks(prevTasks => [...prevTasks, ...result.tasks]);
+      const updatedTasks = [...tasks, ...result.tasks];
+      setTasks(updatedTasks);
+      // Removed setTasksInStore - now handled by useEffect
       
       // Cerrar el formulario
       setShowBulkTaskForm(false);
       
-      console.log(result.message);
+      logger.debug(result.message);
       return result;
     } catch (error) {
-      console.error('Error creating bulk tasks:', error);
+      logger.error('Error creating bulk tasks:', error);
       setError(error instanceof Error ? error.message : 'Error al crear las tareas');
       throw error;
     }
@@ -377,7 +384,7 @@ const HomePage: React.FC = () => {
     subtaskUpdates: { [subtaskId: string]: any };
   }) => {
     try {
-      console.log('🔧 handleBulkEditSave - Datos recibidos:', data);
+      logger.debug('🔧 handleBulkEditSave - Datos recibidos:', data);
       
       // Preparar los datos en el formato esperado por la API
       const updates = {
@@ -389,7 +396,7 @@ const HomePage: React.FC = () => {
         subtaskUpdates: data.subtaskUpdates || {}
       };
       
-      console.log('🔧 handleBulkEditSave - Updates preparados:', updates);
+      logger.debug('🔧 handleBulkEditSave - Updates preparados:', updates);
       
       // Usar selectedTasks en lugar de bulkEditTasks
       await handleBulkEdit(selectedTasks, updates);
@@ -398,7 +405,7 @@ const HomePage: React.FC = () => {
       setShowBulkEditModal(false);
       setSelectedTasks([]);
     } catch (error) {
-      console.error('Error en edición masiva:', error);
+      logger.error('Error en edición masiva:', error);
       throw error;
     }
   };
@@ -411,10 +418,10 @@ const HomePage: React.FC = () => {
   // Estado para evitar múltiples actualizaciones simultáneas
   const [processingTasks, setProcessingTasks] = useState<Set<string>>(new Set());
 
-  // Función para verificar y completar tarea padre si todas sus subtareas están completadas
-  const checkAndCompleteParentTask = useCallback(async (parentTaskId: string) => {
+  // Función para completar todas las subtareas cuando se completa la tarea padre
+  const completeAllSubtasks = useCallback(async (parentTaskId: string) => {
     if (processingTasks.has(parentTaskId)) {
-      console.log(`Parent task ${parentTaskId} is already being processed, skipping check`);
+      logger.debug(`Parent task ${parentTaskId} is already being processed, skipping subtask completion`);
       return;
     }
 
@@ -431,30 +438,160 @@ const HomePage: React.FC = () => {
         return null;
       };
 
-      // Obtener el estado actual de las tareas usando setTasks con función callback
-      let parentTask: Task | null = null;
-      setTasks(currentTasks => {
-        parentTask = findTaskById(currentTasks, parentTaskId);
-        return currentTasks; // No modificar el estado, solo obtener la referencia actual
-      });
+      // Obtener el estado actual de las tareas usando useRef para evitar setState durante renderizado
+      const parentTask = findTaskById(tasks, parentTaskId);
       
       if (!parentTask) {
-        console.log(`Parent task ${parentTaskId} not found`);
+        logger.debug(`Parent task ${parentTaskId} not found`);
+        return;
+      }
+
+      if (!parentTask.subtasks || parentTask.subtasks.length === 0) {
+        logger.debug(`Parent task ${parentTaskId} has no subtasks to complete`);
+        return;
+      }
+
+      // Encontrar subtareas incompletas
+      const incompleteSubtasks = parentTask.subtasks.filter(subtask => !subtask.completed);
+      
+      if (incompleteSubtasks.length === 0) {
+        logger.debug(`All subtasks of parent task ${parentTaskId} are already completed`);
+        return;
+      }
+
+      logger.debug(`Completing ${incompleteSubtasks.length} subtasks for parent task ${parentTaskId}`);
+      
+      setProcessingTasks(prev => new Set(prev).add(parentTaskId));
+      
+      try {
+        // Completar todas las subtareas incompletas
+        const completionPromises = incompleteSubtasks.map(async (subtask) => {
+          const response = await fetch(`/api/tasks/${subtask.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ completed: true }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to complete subtask ${subtask.id}: ${response.status}`);
+          }
+
+          return await response.json();
+        });
+
+        const updatedSubtasks = await Promise.all(completionPromises);
+        logger.debug(`Successfully completed ${updatedSubtasks.length} subtasks for parent task ${parentTaskId}`);
+        
+        // Actualizar el estado local
+        setTasks(currentTasks => {
+          const updateTaskInTree = (tasks: Task[]): Task[] => {
+            return tasks.map(t => {
+              if (t.id === parentTaskId && t.subtasks) {
+                return {
+                  ...t,
+                  subtasks: t.subtasks.map(subtask => {
+                    const updatedSubtask = updatedSubtasks.find(us => us.id === subtask.id);
+                    if (updatedSubtask) {
+                      return {
+                        ...subtask,
+                        completed: true,
+                        dueDate: updatedSubtask.dueDate,
+                        originalDueDate: updatedSubtask.originalDueDate
+                      };
+                    }
+                    return subtask;
+                  })
+                };
+              }
+              if (t.subtasks && t.subtasks.length > 0) {
+                return {
+                  ...t,
+                  subtasks: updateTaskInTree(t.subtasks)
+                };
+              }
+              return t;
+            });
+          };
+          const updatedTasks = updateTaskInTree(currentTasks);
+          // Removed setTasksInStore - now handled by useEffect
+          return updatedTasks;
+        });
+        
+      } catch (error) {
+        logger.error(`Error completing subtasks for parent task ${parentTaskId}:`, error);
+      } finally {
+        setProcessingTasks(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(parentTaskId);
+          return newSet;
+        });
+      }
+    } catch (error) {
+      logger.error(`Error in completeAllSubtasks for ${parentTaskId}:`, error);
+    }
+  }, [tasks, processingTasks]);
+
+  // Función para verificar y completar tarea padre si todas sus subtareas están completadas
+  const checkAndCompleteParentTask = useCallback(async (parentTaskId: string, updatedTasks?: Task[]) => {
+    console.log(`🔥 ENTERING checkAndCompleteParentTask with parentTaskId: ${parentTaskId}`);
+    
+    if (processingTasks.has(parentTaskId)) {
+      console.log(`⏸️ Task ${parentTaskId} is already being processed, skipping`);
+      logger.debug(`Parent task ${parentTaskId} is already being processed, skipping check`);
+      return;
+    }
+
+    try {
+      // Función auxiliar para buscar tareas por ID
+      const findTaskById = (tasks: Task[], id: string): Task | null => {
+        for (const task of tasks) {
+          if (task.id === id) return task;
+          if (task.subtasks && task.subtasks.length > 0) {
+            const found = findTaskById(task.subtasks, id);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      // Usar las tareas actualizadas si se proporcionan, sino usar el estado actual
+      const tasksToCheck = updatedTasks || tasks;
+      console.log(`🔍 Using ${updatedTasks ? 'updated' : 'current'} tasks for checking parent task ${parentTaskId}`);
+      
+      // Obtener el estado actual de las tareas directamente
+      const parentTask = findTaskById(tasksToCheck, parentTaskId);
+      
+      if (!parentTask) {
+        logger.debug(`Parent task ${parentTaskId} not found`);
         return;
       }
 
       if (parentTask.completed) {
-        console.log(`Parent task ${parentTaskId} is already completed`);
+        logger.debug(`Parent task ${parentTaskId} is already completed`);
         return;
       }
 
       // Verificar si todas las subtareas están completadas
-      const allSubtasksCompleted = parentTask.subtasks && parentTask.subtasks.length > 0 && 
+      const hasSubtasks = parentTask.subtasks && parentTask.subtasks.length > 0;
+      const allSubtasksCompleted = hasSubtasks && 
         parentTask.subtasks.every(subtask => subtask.completed);
+      
+      console.log(`🔍 Parent task ${parentTaskId} check:`, {
+        hasSubtasks,
+        subtasksCount: parentTask.subtasks?.length || 0,
+        completedSubtasks: parentTask.subtasks?.filter(s => s.completed).length || 0,
+        allSubtasksCompleted,
+        subtasksDetails: parentTask.subtasks?.map(s => ({ id: s.id, title: s.title, completed: s.completed }))
+      });
+
+      console.log(`🚨 DEBUG: allSubtasksCompleted = ${allSubtasksCompleted}, will ${allSubtasksCompleted ? 'PROCEED' : 'SKIP'} with API call`);
 
       if (allSubtasksCompleted) {
+        console.log(`🚀 PROCEEDING with auto-completion for task ${parentTaskId}`);
         const taskLevel = parentTask.parentId ? (parentTask.parent?.parentId ? 'level 2' : 'level 1') : 'level 0';
-        console.log(`All subtasks completed for ${taskLevel} parent task ${parentTaskId}, auto-completing...`);
+        console.log(`✅ All subtasks completed for ${taskLevel} parent task ${parentTaskId}, auto-completing...`);
         
         setProcessingTasks(prev => new Set(prev).add(parentTaskId));
         
@@ -469,7 +606,7 @@ const HomePage: React.FC = () => {
 
           if (response.ok) {
             const updatedTask = await response.json();
-            console.log(`Parent task ${parentTaskId} auto-completed successfully:`, updatedTask);
+            logger.debug(`Parent task ${parentTaskId} auto-completed successfully:`, updatedTask);
             
             // Actualizar el estado
             setTasks(currentTasks => {
@@ -492,22 +629,27 @@ const HomePage: React.FC = () => {
                   return t;
                 });
               };
-              return updateTaskInTree(currentTasks);
+              const updatedTasks = updateTaskInTree(currentTasks);
+              
+              // 🔥 FIXED: Mover la sincronización del store a un useEffect para evitar actualizaciones síncronas
+              // La sincronización se hará automáticamente por el useEffect que observa cambios en tasks
+              
+              return updatedTasks;
             });
             
             // Continuar el efecto dominó si esta tarea también tiene padre
             if (parentTask.parentId) {
-              console.log(`Continuing domino effect: checking grandparent task ${parentTask.parentId}`);
+              logger.debug(`Continuing domino effect: checking grandparent task ${parentTask.parentId}`);
               setTimeout(() => {
                 checkAndCompleteParentTask(parentTask.parentId!);
               }, 150);
             }
           } else {
             const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
-            console.error(`Failed to auto-complete parent task ${parentTaskId}:`, errorData);
+            logger.error(`Failed to auto-complete parent task ${parentTaskId}:`, errorData);
           }
         } catch (error) {
-          console.error(`Error auto-completing parent task ${parentTaskId}:`, error);
+          logger.error(`Error auto-completing parent task ${parentTaskId}:`, error);
         } finally {
           setProcessingTasks(prev => {
             const newSet = new Set(prev);
@@ -516,10 +658,10 @@ const HomePage: React.FC = () => {
           });
         }
       } else {
-        console.log(`Not all subtasks completed for parent task ${parentTaskId}, skipping auto-complete`);
+        logger.debug(`Not all subtasks completed for parent task ${parentTaskId}, skipping auto-complete`);
       }
     } catch (error) {
-      console.error(`Error in checkAndCompleteParentTask for ${parentTaskId}:`, error);
+      logger.error(`Error in checkAndCompleteParentTask for ${parentTaskId}:`, error);
     }
   }, [tasks, processingTasks]);
 
@@ -527,12 +669,12 @@ const HomePage: React.FC = () => {
   const updateTaskRecursively = (task: Task, taskId: string, updatedTask: any): { updatedTask: Task, tasksToAutoComplete: string[] } => {
     // Validaciones de entrada
     if (!task || !taskId || !updatedTask) {
-      console.warn('Invalid parameters in updateTaskRecursively:', { task: !!task, taskId, updatedTask: !!updatedTask });
+      logger.warn('Invalid parameters in updateTaskRecursively:', { task: !!task, taskId, updatedTask: !!updatedTask });
       return { updatedTask: task, tasksToAutoComplete: [] };
     }
 
     if (task.id === taskId) {
-      console.log(`Updating task ${taskId} with new data:`, updatedTask);
+      logger.debug(`Updating task ${taskId} with new data:`, updatedTask);
       return { 
         updatedTask: { 
           ...task, 
@@ -556,8 +698,24 @@ const HomePage: React.FC = () => {
       const allSubtasksCompleted = updatedSubtasks.length > 0 && updatedSubtasks.every(subtask => subtask.completed);
       const shouldAutoComplete = allSubtasksCompleted && !task.completed && task.id !== taskId;
       
+      console.log(`🔍 Auto-complete check for task ${task.id}:`, {
+        title: task.title,
+        hasSubtasks: updatedSubtasks.length > 0,
+        subtasksCount: updatedSubtasks.length,
+        completedSubtasks: updatedSubtasks.filter(s => s.completed).length,
+        allSubtasksCompleted,
+        taskAlreadyCompleted: task.completed,
+        isTargetTask: task.id === taskId,
+        shouldAutoComplete,
+        // Detalles de cada condición
+        condition1_allSubtasksCompleted: allSubtasksCompleted,
+        condition2_taskNotCompleted: !task.completed,
+        condition3_notTargetTask: task.id !== taskId,
+        subtaskDetails: updatedSubtasks.map(s => ({ id: s.id, title: s.title, completed: s.completed }))
+      });
+      
       if (shouldAutoComplete) {
-        console.log(`Marking task ${task.id} for auto-completion because all subtasks are completed`);
+        console.log(`✅ Marking task ${task.id} (${task.title}) for auto-completion because all subtasks are completed`);
         allTasksToAutoComplete.push(task.id);
       }
       
@@ -575,92 +733,52 @@ const HomePage: React.FC = () => {
 
   // Task handlers
   const handleTaskToggle = async (taskId: string, completed: boolean) => {
-    console.log(`handleTaskToggle called with taskId: "${taskId}" (type: ${typeof taskId}), completed: ${completed}`);
-    
     // Validar que taskId sea válido
     if (!taskId || typeof taskId !== 'string' || taskId.trim() === '') {
-      console.error('Invalid taskId provided to handleTaskToggle:', taskId);
+      logger.error('Invalid taskId provided to handleTaskToggle:', taskId);
       return;
     }
     
-    // Log adicional para debugging
-    console.log(`Processing task toggle for ID: "${taskId}", current tasks count: ${tasks.length}`);
-    
-    // Log para debugging general
-    console.log(`Processing task toggle for ID: "${taskId}", current tasks count: ${tasks.length}`);
-    
     // Evitar múltiples actualizaciones simultáneas de la misma tarea
     if (processingTasks.has(taskId) || isUndoing || isRedoing) {
-      console.log(`Task ${taskId} is already being processed or undo/redo in progress, skipping...`);
       return;
     }
 
     setProcessingTasks(prev => new Set(prev).add(taskId));
 
-    // Obtener el estado anterior de la tarea para el historial de undo/redo
-    let previousTaskState: Task | null = null;
-    setTasks(currentTasks => {
-      console.log(`Searching for task ${taskId} in ${currentTasks.length} tasks`);
-      
-      // Log de todos los IDs disponibles para debugging
-      const logAllTaskIds = (tasks: Task[], level = 0) => {
-        const indent = '  '.repeat(level);
-        tasks.forEach(task => {
-          console.log(`${indent}Task ID: ${task.id}, Title: ${task.title}`);
-          if (task.subtasks && task.subtasks.length > 0) {
-            console.log(`${indent}  Subtasks:`);
-            logAllTaskIds(task.subtasks, level + 2);
-          }
-        });
-      };
-      
-      console.log('All available task IDs:');
-      logAllTaskIds(currentTasks);
-      
-      const findTask = (tasks: Task[], depth = 0): Task | null => {
-        const indent = '  '.repeat(depth);
-        for (const task of tasks) {
-          console.log(`${indent}Checking task ID: "${task.id}" (type: ${typeof task.id}) against target: "${taskId}" (type: ${typeof taskId})`);
-          
-          // Comparación más estricta
-          if (task.id && taskId && String(task.id).trim() === String(taskId).trim()) {
-            console.log(`${indent}✓ Found task ${taskId}: ${task.title}`);
-            return task;
-          }
-          
-          if (task.subtasks && Array.isArray(task.subtasks) && task.subtasks.length > 0) {
-            console.log(`${indent}Searching in ${task.subtasks.length} subtasks of "${task.title}"`);
-            const found = findTask(task.subtasks, depth + 1);
-            if (found) {
-              console.log(`${indent}✓ Found in subtasks of "${task.title}"`);
-              return found;
-            }
+    // Función auxiliar para buscar tarea
+    const findTask = (tasks: Task[]): Task | null => {
+      for (const task of tasks) {
+        if (task.id && taskId && String(task.id).trim() === String(taskId).trim()) {
+          return task;
+        }
+        
+        if (task.subtasks && Array.isArray(task.subtasks) && task.subtasks.length > 0) {
+          const found = findTask(task.subtasks);
+          if (found) {
+            return found;
           }
         }
-        console.log(`${indent}No match found at depth ${depth}`);
-         return null;
-       };
-      previousTaskState = findTask(currentTasks);
-      return currentTasks; // No modificar el estado, solo obtener la referencia
-    });
+      }
+      return null;
+    };
+    
+    const previousTaskState = findTask(tasks);
 
     if (!previousTaskState) {
-      console.warn(`Task ${taskId} not found in local state, attempting to fetch from database...`);
-      console.log('Available task IDs:', tasks.map(t => ({ id: t.id, title: t.title })));
+      logger.warn(`Task ${taskId} not found in local state, attempting to fetch from database...`);
       
       try {
         // Intentar obtener la tarea desde la API
         const response = await fetch(`/api/tasks/${taskId}`);
         if (response.ok) {
           const fetchedTask = await response.json();
-          console.log('Task fetched from database:', fetchedTask.id);
           
           // Actualizar el estado local con la tarea obtenida
           setTasks(prevTasks => {
             // Verificar si la tarea ya existe para evitar duplicados
             const exists = prevTasks.some(t => t.id === taskId);
             if (!exists) {
-              console.log('Adding fetched task to local state');
               return [...prevTasks, fetchedTask];
             }
             return prevTasks;
@@ -668,7 +786,7 @@ const HomePage: React.FC = () => {
           
           previousTaskState = fetchedTask;
         } else {
-          console.error(`Task ${taskId} not found in database either (${response.status})`);
+          logger.error(`Task ${taskId} not found in database either (${response.status})`);
           setProcessingTasks(prev => {
             const newSet = new Set(prev);
             newSet.delete(taskId);
@@ -677,7 +795,7 @@ const HomePage: React.FC = () => {
           return;
         }
       } catch (error) {
-        console.error(`Error fetching task ${taskId}:`, error);
+        logger.error(`Error fetching task ${taskId}:`, error);
         setProcessingTasks(prev => {
           const newSet = new Set(prev);
           newSet.delete(taskId);
@@ -698,7 +816,7 @@ const HomePage: React.FC = () => {
         throw new Error('Invalid completed value provided');
       }
 
-      console.log(`Attempting to toggle task ${taskId} to ${completed ? 'completed' : 'pending'}`);
+      logger.debug(`Attempting to toggle task ${taskId} to ${completed ? 'completed' : 'pending'}`);
 
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
@@ -707,8 +825,6 @@ const HomePage: React.FC = () => {
         },
         body: JSON.stringify({ completed }),
       });
-
-      console.log(`API Response status: ${response.status}, ok: ${response.ok}`);
       
       if (!response.ok) {
         let errorMessage = 'Failed to update task';
@@ -726,29 +842,38 @@ const HomePage: React.FC = () => {
             errorData = { message: 'Empty response from server' };
           }
           
-          console.error('API Error Response:', {
+          logger.error('API Error Response:', {
             status: response.status,
             statusText: response.statusText,
-            responseText: responseText,
             errorData: errorData
           });
           
           errorMessage = errorData.error || errorData.message || errorMessage;
         } catch (parseError) {
-          console.error('Failed to parse error response:', parseError);
+          logger.error('Failed to parse error response:', parseError);
           errorMessage = `HTTP ${response.status}: ${response.statusText}`;
         }
         throw new Error(errorMessage);
       }
 
       const updatedTask = await response.json();
-      console.log('Task updated successfully:', updatedTask);
+
+      // Preparar datos para el sistema undo/redo ANTES de procesar subtareas
+      let subtasksToComplete: Task[] = [];
+      if (completed && previousTaskState.subtasks && previousTaskState.subtasks.length > 0) {
+        subtasksToComplete = previousTaskState.subtasks.filter(subtask => !subtask.completed);
+      }
 
       // Registrar la acción en el historial de undo/redo
       if (!isUndoing && !isRedoing) {
+        const hasSubtasksToComplete = subtasksToComplete.length > 0;
+        const actionDescription = hasSubtasksToComplete 
+          ? `${completed ? 'Completar' : 'Descompletar'} tarea y ${subtasksToComplete.length} subtarea(s): ${previousTaskState.title}`
+          : `${completed ? 'Completar' : 'Descompletar'} tarea: ${previousTaskState.title}`;
+
         addAction({
           type: 'TASK_TOGGLE',
-          description: `${completed ? 'Completar' : 'Descompletar'} tarea: ${previousTaskState.title}`,
+          description: actionDescription,
           data: {
             taskId,
             previousState: { 
@@ -756,11 +881,43 @@ const HomePage: React.FC = () => {
               dueDate: previousTaskState.dueDate,
               originalDueDate: previousTaskState.originalDueDate
             },
-            newState: { completed }
+            newState: { completed },
+            subtasksToRevert: subtasksToComplete.map(subtask => ({
+              id: subtask.id,
+              completed: subtask.completed,
+              dueDate: subtask.dueDate,
+              originalDueDate: subtask.originalDueDate
+            }))
           },
           undo: async () => {
-            // Llamada directa a la API sin pasar por handleTaskToggle para evitar recursión
+            // Deshacer la tarea padre Y todas las subtareas que se completaron automáticamente
             try {
+              // 1. Primero deshacer las subtareas si las había
+              if (hasSubtasksToComplete) {
+                const subtaskPromises = subtasksToComplete.map(async (subtask) => {
+                  const response = await fetch(`/api/tasks/${subtask.id}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                      completed: subtask.completed,
+                      dueDate: subtask.dueDate,
+                      originalDueDate: subtask.originalDueDate
+                    }),
+                  });
+                  
+                  if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                  }
+                  
+                  return await response.json();
+                });
+                
+                await Promise.all(subtaskPromises);
+              }
+
+              // 2. Luego deshacer la tarea padre
               const response = await fetch(`/api/tasks/${taskId}`, {
                 method: 'PUT',
                 headers: {
@@ -779,7 +936,7 @@ const HomePage: React.FC = () => {
               
               const updatedTask = await response.json();
               
-              // Actualizar el estado local
+              // 3. Actualizar el estado local
               setTasks(prevTasks => {
                 return prevTasks.map(task => {
                   const result = updateTaskRecursively(task, taskId, updatedTask);
@@ -787,13 +944,14 @@ const HomePage: React.FC = () => {
                 });
               });
             } catch (error) {
-              console.error('Error in undo operation:', error);
+              logger.error('Error in undo operation:', error);
               throw error;
             }
           },
           redo: async () => {
-            // Llamada directa a la API sin pasar por handleTaskToggle para evitar recursión
+            // Rehacer la tarea padre Y completar automáticamente las subtareas
             try {
+              // 1. Primero rehacer la tarea padre
               const response = await fetch(`/api/tasks/${taskId}`, {
                 method: 'PUT',
                 headers: {
@@ -808,7 +966,28 @@ const HomePage: React.FC = () => {
               
               const updatedTask = await response.json();
               
-              // Actualizar el estado local
+              // 2. Si se está completando y había subtareas, completarlas también
+              if (completed && hasSubtasksToComplete) {
+                const subtaskPromises = subtasksToComplete.map(async (subtask) => {
+                  const response = await fetch(`/api/tasks/${subtask.id}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ completed: true }),
+                  });
+                  
+                  if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                  }
+                  
+                  return await response.json();
+                });
+                
+                await Promise.all(subtaskPromises);
+              }
+              
+              // 3. Actualizar el estado local
               setTasks(prevTasks => {
                 return prevTasks.map(task => {
                   const result = updateTaskRecursively(task, taskId, updatedTask);
@@ -816,7 +995,7 @@ const HomePage: React.FC = () => {
                 });
               });
             } catch (error) {
-              console.error('Error in redo operation:', error);
+              logger.error('Error in redo operation:', error);
               throw error;
             }
           }
@@ -825,55 +1004,72 @@ const HomePage: React.FC = () => {
       
       // Actualizar el estado y obtener las tareas que necesitan auto-completarse
       let tasksToAutoComplete: string[] = [];
+      let updatedTasksForState: Task[] = [];
       
+      // 🔥 FIRST: Procesar las tareas y capturar el array ANTES de setTasks
       setTasks(prevTasks => {
-        const updatedTasks = prevTasks.map(task => {
+        updatedTasksForState = prevTasks.map(task => {
           const result = updateTaskRecursively(task, taskId, updatedTask);
           tasksToAutoComplete = [...tasksToAutoComplete, ...result.tasksToAutoComplete];
           return result.updatedTask;
         });
-        return updatedTasks;
-      });
-      
-      // Procesar las tareas que necesitan auto-completarse después de la actualización del estado
-      if (tasksToAutoComplete.length > 0) {
-        // Eliminar duplicados y filtrar tareas que ya están siendo procesadas
-        const uniqueTasksToComplete = [...new Set(tasksToAutoComplete)].filter(taskId => !processingTasks.has(taskId));
         
-        if (uniqueTasksToComplete.length > 0) {
-          console.log('Unique tasks to auto-complete:', uniqueTasksToComplete);
+        console.log('🔥 CAPTURED tasksToAutoComplete BEFORE setState:', tasksToAutoComplete);
+        
+        // 🔥 CRITICAL: Procesar auto-completados INMEDIATAMENTE después de capturar
+        if (tasksToAutoComplete.length > 0) {
+          console.log(`🚀 AUTOCOMPLETION: Found ${tasksToAutoComplete.length} tasks to auto-complete:`, tasksToAutoComplete);
+          
           // Usar setTimeout para asegurar que el estado se actualice primero
-          setTimeout(() => {
-            uniqueTasksToComplete.forEach((taskToComplete, index) => {
-              // Agregar un pequeño delay entre cada auto-completado para evitar condiciones de carrera
-              setTimeout(() => {
-                checkAndCompleteParentTask(taskToComplete);
-              }, index * 150); // Aumentar el delay para dar más tiempo
-            });
-          }, 100); // Aumentar el delay inicial
+          setTimeout(async () => {
+            try {
+              // Procesar tareas padre directamente de forma secuencial
+              const uniqueTasksToComplete = [...new Set(tasksToAutoComplete)].filter(taskId => !processingTasks.has(taskId));
+              
+              console.log(`🚀 AUTOCOMPLETION: After filtering, processing ${uniqueTasksToComplete.length} unique tasks:`, uniqueTasksToComplete);
+              
+              if (uniqueTasksToComplete.length > 0) {
+                // Procesar cada tarea padre de forma secuencial
+                for (const parentTaskId of uniqueTasksToComplete) {
+                  try {
+                    console.log(`🚀 AUTOCOMPLETION: Starting auto-completion for parent task ${parentTaskId}`);
+                    await checkAndCompleteParentTask(parentTaskId, updatedTasksForState);
+                    // Pequeña pausa entre procesamiento
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                  } catch (error) {
+                    console.error(`Error processing parent task ${parentTaskId}:`, error);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Error in sequential auto-completion:', error);
+            }
+          }, 100);
+        } else {
+          console.log(`🚀 AUTOCOMPLETION: No tasks to auto-complete for taskId ${taskId}`);
         }
-      }
+        
+        // 🔥 CRITICAL: Sincronizar con el store de Zustand para que TaskListContainer vea los cambios
+        // Removed setTasksInStore - now handled by useEffect
+        
+        return updatedTasksForState;
+      });
     } catch (error) {
-      console.error('Error in handleTaskToggle:', {
+      logger.error('Error in handleTaskToggle:', {
         taskId,
         completed,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
+        error: error instanceof Error ? error.message : 'Unknown error'
       });
       
-      // Mostrar notificación de error al usuario (opcional)
-      // Aquí podrías agregar una notificación toast si tienes un sistema de notificaciones
-      
-      // Re-lanzar el error solo si es crítico, de lo contrario solo loguearlo
+      // Re-lanzar el error solo si es crítico
       if (error instanceof Error && error.message.includes('Invalid')) {
-        throw error; // Re-lanzar errores de validación
+        throw error;
       }
     } finally {
-      // Limpiar el estado de procesamiento de forma segura
+      // Limpiar el estado de procesamiento
       setProcessingTasks(prev => {
         const newSet = new Set(prev);
         newSet.delete(taskId);
-        console.log(`Removed task ${taskId} from processing set. Remaining:`, Array.from(newSet));
         return newSet;
       });
     }
@@ -898,7 +1094,9 @@ const HomePage: React.FC = () => {
   };
 
   const handleTaskUpdate = async (taskId: string, taskData: Partial<Task>) => {
+    logger.debug('🔥 HomePage - handleTaskUpdate called', { taskId, taskData });
     try {
+      logger.debug('📡 HomePage - Making API call to update task...');
       const response = await fetch(`/api/tasks/${taskId}`, {
         method: 'PUT',
         headers: {
@@ -906,7 +1104,7 @@ const HomePage: React.FC = () => {
         },
         body: JSON.stringify(taskData),
       });
-
+      
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Failed to update task' }));
         throw new Error(errorData.message || 'Failed to update task');
@@ -914,12 +1112,13 @@ const HomePage: React.FC = () => {
 
       const updatedTask = await response.json();
       
-      setTasks(prevTasks => 
-        prevTasks.map(task => updateTaskDataRecursively(task, taskId, updatedTask))
-      );
+      const updatedTasks = tasks.map(task => updateTaskDataRecursively(task, taskId, updatedTask));
+      setTasks(updatedTasks);
+      
+      // Update Zustand store to sync with TaskListContainer
     } catch (error) {
-      console.error('Error updating task:', error);
-      throw error; // Re-lanzar el error para que lo maneje el componente que llama
+      logger.error('Error updating task:', error);
+      throw error;
     }
   };
 
@@ -930,6 +1129,7 @@ const HomePage: React.FC = () => {
   };
 
   const handleTaskSubmit = async (taskData: Partial<Task> & { tagIds: string[]; groupId?: string; copiedSubtasks?: Task[] }) => {
+    
     try {
       const { tagIds, groupId, copiedSubtasks, ...taskFields } = taskData;
       
@@ -955,24 +1155,26 @@ const HomePage: React.FC = () => {
 
         const updatedTask = await response.json();
         
-        setTasks(prevTasks => 
-          prevTasks.map(task => {
-            if (task.id === editingTask.id) {
-              return updatedTask;
-            }
-            
-            if (task.subtasks && task.subtasks.length > 0) {
-              return {
-                ...task,
-                subtasks: task.subtasks.map(subtask => 
-                  subtask.id === editingTask.id ? updatedTask : subtask
-                )
-              };
-            }
-            
-            return task;
-          })
-        );
+        // ✅ Actualización inmediata del estado sin flushSync
+        const updatedTasks = tasks.map(task => {
+          if (task.id === editingTask.id) {
+            return updatedTask;
+          }
+          
+          if (task.subtasks && task.subtasks.length > 0) {
+            return {
+              ...task,
+              subtasks: task.subtasks.map(subtask => 
+                subtask.id === editingTask.id ? updatedTask : subtask
+              )
+            };
+          }
+          
+          return task;
+        });
+        
+        setTasks(updatedTasks);
+        // Removed setTasksInStore - now handled by useEffect
       } else {
         // Create new task
         const response = await fetch('/api/tasks', {
@@ -1026,31 +1228,34 @@ const HomePage: React.FC = () => {
         
         if (parentTask) {
           // Add as subtask
-          setTasks(prevTasks => 
-            prevTasks.map(task => 
-              task.id === parentTask.id 
-                ? { ...task, subtasks: [...(task.subtasks || []), newTask] }
-                : task
-            )
+          // ✅ Actualización inmediata del estado sin flushSync
+          const updatedTasks = tasks.map(task => 
+            task.id === parentTask.id 
+              ? { ...task, subtasks: [...(task.subtasks || []), newTask] }
+              : task
           );
+          setTasks(updatedTasks);
+          // Removed setTasksInStore - now handled by useEffect
         } else {
           // Add as main task
-          setTasks(prevTasks => [newTask, ...prevTasks]);
+          // ✅ Actualización inmediata del estado sin flushSync
+          const updatedTasks = [newTask, ...tasks];
+          setTasks(updatedTasks);
+          // Removed setTasksInStore - now handled by useEffect
         }
       }
 
       // Close form and reset states
-      setShowTaskForm(false);
-      setEditingTask(null);
+      closeTaskForm();
+      // editingTask is now managed by UIStore
       setParentTask(null);
     } catch (error) {
-      console.error('Error submitting task:', error);
+      logger.error('Error submitting task:', error);
     }
   };
 
   const handleTaskEdit = (task: Task) => {
-    setEditingTask(task);
-    setShowTaskForm(true);
+    openTaskForm(task);
   };
 
   const handleTaskDelete = (taskId: string) => {
@@ -1078,15 +1283,15 @@ const HomePage: React.FC = () => {
       }
 
       // Remove task from state
-      console.log('🔍 Estado antes de eliminar:', tasks.length, 'tareas');
-      console.log('🔍 Eliminando tarea con ID:', taskToDelete.id);
-      console.log('🔍 Tarea a eliminar:', taskToDelete);
+      logger.debug('🔍 Estado antes de eliminar:', tasks.length, 'tareas');
+      logger.debug('🔍 Eliminando tarea con ID:', taskToDelete.id);
+      logger.debug('🔍 Tarea a eliminar:', taskToDelete);
       
       setTasks(prevTasks => {
-        console.log('🔍 Estado previo en setTasks:', prevTasks.length, 'tareas');
+        logger.debug('🔍 Estado previo en setTasks:', prevTasks.length, 'tareas');
         
         const filteredTasks = prevTasks.filter(task => task.id !== taskToDelete.id);
-        console.log('🔍 Después de filtrar tareas principales:', filteredTasks.length, 'tareas');
+        logger.debug('🔍 Después de filtrar tareas principales:', filteredTasks.length, 'tareas');
         
         // Función recursiva para eliminar subtareas anidadas
         const removeTaskRecursively = (tasks: Task[], targetId: string): Task[] => {
@@ -1100,16 +1305,16 @@ const HomePage: React.FC = () => {
         
         const updatedTasks = removeTaskRecursively(filteredTasks, taskToDelete.id);
         
-        console.log('🔍 Estado final después de eliminar subtareas:', updatedTasks.length, 'tareas');
-        console.log('🔍 Tareas actualizadas:', updatedTasks.map(t => ({ id: t.id, title: t.title, subtasks: t.subtasks?.length || 0 })));
+        logger.debug('🔍 Estado final después de eliminar subtareas:', updatedTasks.length, 'tareas');
+        logger.debug('🔍 Tareas actualizadas:', updatedTasks.map(t => ({ id: t.id, title: t.title, subtasks: t.subtasks?.length || 0 })));
         
         // Verificar si la tarea eliminada realmente se removió
         const taskStillExists = updatedTasks.some(t => t.id === taskToDelete.id);
         const subtaskStillExists = updatedTasks.some(t => 
           t.subtasks && t.subtasks.some(st => st.id === taskToDelete.id)
         );
-        console.log('🔍 ¿Tarea principal aún existe?:', taskStillExists);
-        console.log('🔍 ¿Subtarea aún existe?:', subtaskStillExists);
+        logger.debug('🔍 ¿Tarea principal aún existe?:', taskStillExists);
+        logger.debug('🔍 ¿Subtarea aún existe?:', subtaskStillExists);
         
         return updatedTasks;
       });
@@ -1120,7 +1325,7 @@ const HomePage: React.FC = () => {
       setShowDeleteModal(false);
       setTaskToDelete(null);
     } catch (error) {
-      console.error('Error deleting task:', error);
+      logger.error('Error deleting task:', error);
     } finally {
       setDeleteLoading(false);
     }
@@ -1164,7 +1369,7 @@ const HomePage: React.FC = () => {
           
           return { success: true, taskId: task.id, task };
         } catch (error) {
-          console.error(`Error deleting task ${task.id}:`, error);
+          logger.error(`Error deleting task ${task.id}:`, error);
           return { success: false, taskId: task.id, task, error: error.message };
         }
       });
@@ -1198,18 +1403,18 @@ const HomePage: React.FC = () => {
         
         // If some deletions were successful, show a partial success message
         if (successfulDeletions.length > 0) {
-          console.log(`Successfully deleted ${successfulDeletions.length} tasks, failed to delete ${failedDeletions.length} tasks`);
+          logger.debug(`Successfully deleted ${successfulDeletions.length} tasks, failed to delete ${failedDeletions.length} tasks`);
         }
       } else {
         // All deletions were successful
-        console.log(`Successfully deleted ${successfulDeletions.length} tasks`);
+        logger.debug(`Successfully deleted ${successfulDeletions.length} tasks`);
       }
 
       setShowBulkDeleteModal(false);
       setTasksToDelete([]);
       // La limpieza de selección se maneja desde el modal después de la eliminación
     } catch (error) {
-      console.error('Error in bulk delete operation:', error);
+      logger.error('Error in bulk delete operation:', error);
       setError(`Error during bulk delete: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setBulkDeleteLoading(false);
@@ -1229,7 +1434,7 @@ const HomePage: React.FC = () => {
     const parent = tasks.find(t => t.id === parentId);
     if (parent) {
       setParentTask(parent);
-      setShowTaskForm(true);
+      openTaskForm();
     }
   };
 
@@ -1241,9 +1446,43 @@ const HomePage: React.FC = () => {
     tagIds: string[];
   }) => {
     try {
+      // Encontrar la tarea padre para validar el nivel de profundidad
+      const findParentTask = (taskList: Task[], id: string): Task | null => {
+        for (const task of taskList) {
+          if (task.id === id) return task;
+          if (task.subtasks) {
+            const found = findParentTask(task.subtasks, id);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const parentTask = findParentTask(tasks, parentId);
+      if (!parentTask) {
+        throw new Error('Parent task not found');
+      }
+
+      // Validar que la tarea padre puede tener subtareas (no está en el nivel máximo)
+      if (!canHaveSubtasks(parentTask, tasks)) {
+        throw new Error('Maximum subtask depth reached. Cannot create subtasks beyond 2 levels.');
+      }
+      
+      // Validar que subtaskData exista y usar valores por defecto para propiedades faltantes
+      if (!subtaskData) {
+        logger.error('❌ Subtask data is missing - subtaskData is falsy:', subtaskData);
+        throw new Error('Subtask data is missing');
+      }
+      
+      // Validar campos requeridos específicos
+      if (!subtaskData.title || subtaskData.title.trim() === '') {
+        logger.error('❌ Subtask title is missing or empty:', subtaskData.title);
+        throw new Error('Subtask title is required');
+      }
+
       const payload = {
         ...subtaskData,
-        priority: subtaskData.priority.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH',
+        priority: (subtaskData.priority || 'MEDIUM').toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH',
         parentId,
         tagIds: subtaskData.tagIds || []
       };
@@ -1262,6 +1501,7 @@ const HomePage: React.FC = () => {
 
       const newSubtask = await response.json();
       
+      // ✅ ACTUALIZAR EL ESTADO INMEDIATAMENTE para cada subtarea
       // Función recursiva para actualizar subtareas anidadas
       const updateTaskRecursively = (task: Task): Task => {
         if (task.id === parentId) {
@@ -1287,9 +1527,67 @@ const HomePage: React.FC = () => {
         return task;
       };
       
-      setTasks(prevTasks => prevTasks.map(updateTaskRecursively));
+      // ✅ Usar función de actualización de estado para evitar problemas de concurrencia
+      flushSync(() => {
+        setTasks(prevTasks => prevTasks.map(updateTaskRecursively));
+      });
+      
+      // ✅ RETORNAR la subtarea creada para que Promise.all funcione correctamente
+      return newSubtask;
+      
     } catch (error) {
-      console.error('Error creating subtask:', error);
+      logger.error('Error creating subtask:', error);
+      throw error;
+    }
+  };
+
+  // ✅ Nueva función para manejar la creación de múltiples subtareas
+  const handleBulkSubtaskCreate = async (parentId: string, subtasksData: Array<{
+    title: string;
+    description?: string;
+    priority: 'low' | 'medium' | 'high';
+    dueDate?: string;
+    tagIds: string[];
+  }>) => {
+    try {
+      // Crear todas las subtareas en paralelo
+      const newSubtasks = await Promise.all(
+        subtasksData.map(subtaskData => handleInlineSubtaskCreate(parentId, subtaskData))
+      );
+
+      // Función recursiva para actualizar subtareas anidadas
+      const updateTaskRecursively = (task: Task): Task => {
+        if (task.id === parentId) {
+          const updatedTask = { ...task, subtasks: [...(task.subtasks || []), ...newSubtasks] };
+          
+          // Lógica automática: si se agrega una subtarea a una tarea completada, descompletarla
+          if (task.completed) {
+            handleTaskToggle(parentId, false);
+          }
+          
+          return updatedTask;
+        }
+        
+        // Si la tarea tiene subtareas, buscar recursivamente
+        if (task.subtasks && task.subtasks.length > 0) {
+          const updatedSubtasks = task.subtasks.map(updateTaskRecursively);
+          // Solo actualizar si alguna subtarea cambió
+          if (updatedSubtasks.some((subtask, index) => subtask !== task.subtasks[index])) {
+            return { ...task, subtasks: updatedSubtasks };
+          }
+        }
+        
+        return task;
+      };
+      
+      // ✅ Actualizar el estado una sola vez con todas las subtareas
+      React.startTransition(() => {
+        const updatedTasks = tasks.map(updateTaskRecursively);
+        setTasks(updatedTasks);
+      });
+      
+    } catch (error) {
+      logger.error('Error creating bulk subtasks:', error);
       throw error;
     }
   };
@@ -1312,7 +1610,7 @@ const HomePage: React.FC = () => {
       const newGroup = await response.json();
       setGroups(prevGroups => [...prevGroups, newGroup]);
     } catch (error) {
-      console.error('Error creating group:', error);
+      logger.error('Error creating group:', error);
     }
   };
 
@@ -1333,7 +1631,7 @@ const HomePage: React.FC = () => {
       const updatedGroup = await response.json();
       setGroups(prevGroups => prevGroups.map(group => group.id === groupId ? updatedGroup : group));
     } catch (error) {
-      console.error('Error updating group:', error);
+      logger.error('Error updating group:', error);
     }
   };
 
@@ -1352,7 +1650,7 @@ const HomePage: React.FC = () => {
       // Reload tasks to update any that were in this group
       loadData();
     } catch (error) {
-      console.error('Error deleting group:', error);
+      logger.error('Error deleting group:', error);
     }
   };
 
@@ -1374,7 +1672,7 @@ const HomePage: React.FC = () => {
       const newTag = await response.json();
       setTags(prevTags => [...prevTags, newTag]);
     } catch (error) {
-      console.error('Error creating tag:', error);
+      logger.error('Error creating tag:', error);
     }
   };
 
@@ -1395,7 +1693,7 @@ const HomePage: React.FC = () => {
       const updatedTag = await response.json();
       setTags(prevTags => prevTags.map(tag => tag.id === tagId ? updatedTag : tag));
     } catch (error) {
-      console.error('Error updating tag:', error);
+      logger.error('Error updating tag:', error);
     }
   };
 
@@ -1412,7 +1710,7 @@ const HomePage: React.FC = () => {
       setTags(prevTags => prevTags.filter(tag => tag.id !== tagId));
       setSelectedTags(prevSelected => prevSelected.filter(id => id !== tagId));
     } catch (error) {
-      console.error('Error deleting tag:', error);
+      logger.error('Error deleting tag:', error);
     }
   };
 
@@ -1574,7 +1872,7 @@ const HomePage: React.FC = () => {
               
 
               <button
-                onClick={() => setShowTagManager(true)}
+                onClick={() => openTagManager()}
                 className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
               >
                 <TagIcon className="w-4 h-4" />
@@ -1584,7 +1882,7 @@ const HomePage: React.FC = () => {
               
 
               <button
-                onClick={() => setShowGroupManager(true)}
+                onClick={() => openGroupManager()}
                 className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
               >
                 <Users className="w-4 h-4" />
@@ -1637,19 +1935,6 @@ const HomePage: React.FC = () => {
               filteredTasks={filteredTasks}
               availableTags={tags}
               availableGroups={groups}
-              selectedTags={selectedTags}
-              selectedGroups={selectedGroups}
-              selectedPriorities={selectedPriorities}
-              showCompleted={showCompleted}
-              showOverdue={showOverdue}
-              dateFilter={dateFilter}
-              onTagFilterChange={handleTagFilterChange}
-              onGroupFilterChange={handleGroupFilterChange}
-              onPriorityFilterChange={handlePriorityFilterChange}
-              onShowCompletedChange={setShowCompleted}
-              onShowOverdueChange={setShowOverdue}
-              onDateFilterChange={setDateFilter}
-              onClearAllFilters={clearAllFilters}
             />
           </div>
         </div>
@@ -1854,10 +2139,10 @@ const HomePage: React.FC = () => {
 
       {/* Modals */}
       <TaskForm
-        isOpen={showTaskForm}
+        isOpen={isTaskFormOpen}
         onClose={() => {
-          setShowTaskForm(false);
-          setEditingTask(null);
+          closeTaskForm();
+          // editingTask is now managed by UIStore
           setParentTask(null);
         }}
         onSubmit={handleTaskSubmit}
@@ -1868,8 +2153,8 @@ const HomePage: React.FC = () => {
       />
 
       <TagManager
-        isOpen={showTagManager}
-        onClose={() => setShowTagManager(false)}
+        isOpen={isTagManagerOpen}
+        onClose={() => closeTagManager()}
         tags={tags}
         onCreateTag={handleCreateTag}
         onUpdateTag={handleUpdateTag}
@@ -1877,8 +2162,8 @@ const HomePage: React.FC = () => {
       />
 
       <GroupManager
-        isOpen={showGroupManager}
-        onClose={() => setShowGroupManager(false)}
+        isOpen={isGroupManagerOpen}
+        onClose={() => closeGroupManager()}
         groups={groups}
         onCreateGroup={handleCreateGroup}
         onUpdateGroup={handleUpdateGroup}
@@ -1910,7 +2195,7 @@ const HomePage: React.FC = () => {
             try {
               clearSelectionFn();
             } catch (error) {
-              console.error('Error executing clearSelectionFn:', error);
+              logger.error('Error executing clearSelectionFn:', error);
             }
           }
           // Forzar cierre del modal como fallback
@@ -1926,7 +2211,6 @@ const HomePage: React.FC = () => {
         isOpen={showBulkEditModal}
         onClose={handleBulkEditClose}
         onSave={handleBulkEditSave}
-        selectedTaskIds={selectedTasks}
         allTasks={tasks}
         availableTags={tags}
         availableGroups={groups}

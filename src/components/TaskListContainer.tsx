@@ -1,19 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { Task, Tag, TaskGroup, Priority } from '../types';
 import { TaskItem } from './TaskItem';
 import { TaskMultiSelect } from './TaskMultiSelect';
 import { TaskGroupHeader } from './TaskGroupHeader';
-
+import { useTaskStore } from '../stores/useTaskStore';
+import { useFilterStore } from '../stores/useFilterStore';
 
 import { Plus } from 'lucide-react';
 
 interface TaskListContainerProps {
-  tasks: Task[];
-  availableTags: Tag[];
-  availableGroups: TaskGroup[];
-  isGroupedView?: boolean;
-  isMultiSelectMode?: boolean;
-  setIsMultiSelectMode?: (value: boolean) => void;
   onTaskToggle: (taskId: string, completed: boolean) => void;
   onTaskEdit: (task: Task) => void;
   onTaskUpdate?: (taskId: string, updates: Partial<Task>) => Promise<void>;
@@ -28,12 +23,6 @@ interface TaskListContainerProps {
  * Refactorizado desde TaskList.tsx para mejorar la modularidad y mantenibilidad
  */
 export const TaskListContainer: React.FC<TaskListContainerProps> = ({
-  tasks,
-  availableTags,
-  availableGroups,
-  isGroupedView = false,
-  isMultiSelectMode = false,
-  setIsMultiSelectMode,
   onTaskToggle,
   onTaskEdit,
   onTaskUpdate,
@@ -42,28 +31,90 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
   onBulkEdit,
   onBulkDelete
 }) => {
-  // Estados para UI y interacciones
-  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set());
-  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [editingTasks, setEditingTasks] = useState<Set<string>>(new Set());
-  const [editingValues, setEditingValues] = useState<Record<string, string>>({});
-  const [inlineEditingTasks, setInlineEditingTasks] = useState<Set<string>>(new Set());
-  const [creatingSubtasks, setCreatingSubtasks] = useState<Set<string>>(new Set());
-  const [completingTasks, setCompletingTasks] = useState<Set<string>>(new Set());
-  const [animatingProgress, setAnimatingProgress] = useState<Set<string>>(new Set());
-  const [openMenus, setOpenMenus] = useState<Set<string>>(new Set());
-  const [visibleHistory, setVisibleHistory] = useState<Set<string>>(new Set());
-  const [hoveredTasks, setHoveredTasks] = useState<Set<string>>(new Set());
-  const [clickedTasks, setClickedTasks] = useState<Set<string>>(new Set());
-  
-  // Estados para filtros
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
-  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
-  const [selectedPriorities, setSelectedPriorities] = useState<Set<Priority>>(new Set());
-  const [showCompleted, setShowCompleted] = useState(true);
-  const [showOverdue, setShowOverdue] = useState(false);
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  // Usar stores de Zustand
+  const {
+    tasks,
+    availableTags,
+    availableGroups,
+    isGroupedView,
+    isMultiSelectMode,
+    setIsMultiSelectMode,
+    ui: {
+      selectedTasks,
+      expandedTasks,
+      expandedGroups,
+      editingTasks,
+      editingValues,
+      inlineEditingTasks,
+      creatingSubtasks,
+      completingTasks,
+      animatingProgress,
+      openMenus,
+      visibleHistory,
+      hoveredTasks,
+      clickedTasks
+    },
+    filters: {
+      selectedTags: selectedTagsFilter,
+      selectedGroups: selectedGroupsFilter,
+      selectedPriorities,
+      showCompleted,
+      showOverdue,
+      dateFilter
+    },
+    // Acciones de UI
+    setSelectedTasks,
+    toggleTaskSelection,
+    selectAllTasks,
+    clearSelectedTasks,
+    setExpandedTasks,
+    toggleTaskExpansion,
+    setExpandedGroups,
+    toggleGroupExpansion,
+    setEditingTasks,
+    toggleTaskEditing,
+    setEditingValues,
+     updateEditingValue,
+     addEditingTask,
+     removeEditingTask,
+     setEditingValue,
+     removeEditingValue,
+    setInlineEditingTasks,
+    removeInlineEditingTask,
+    toggleInlineEditing,
+    setCreatingSubtasks,
+      toggleSubtaskCreation,
+      addCreatingSubtask,
+      removeCreatingSubtask,
+    setCompletingTasks,
+    toggleTaskCompletion,
+    setAnimatingProgress,
+    toggleProgressAnimation,
+    setOpenMenus,
+     toggleMenu,
+     closeAllMenus,
+     setOpenMenu,
+     addHoveredTask,
+     clearHoveredTasks,
+     addCompletingTask,
+     removeCompletingTask,
+    setVisibleHistory,
+     toggleHistoryVisibility,
+     toggleVisibleHistory,
+    setHoveredTasks,
+    toggleTaskHover,
+    setClickedTasks,
+    toggleTaskClick,
+    getFilteredTasks
+  } = useTaskStore();
+
+  // Desestructuración del FilterStore
+  const {
+    toggleTagFilter: toggleSelectedTag,
+    toggleGroupFilter: toggleSelectedGroup,
+    togglePriorityFilter: toggleSelectedPriority,
+    clearAllFilters
+  } = useFilterStore();
 
   // Efectos para debug y manejo de eventos globales
   useEffect(() => {
@@ -74,13 +125,13 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
       if (!target.closest('[data-context-menu]')) {
-        setOpenMenus(new Set());
+        closeAllMenus();
       }
     };
 
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
-  }, []);
+  }, [closeAllMenus]);
 
   // Inicializar grupos expandidos por defecto
   useEffect(() => {
@@ -93,75 +144,12 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
       }
       setExpandedGroups(allGroupIds);
     }
-  }, [availableGroups, tasks]);
+  }, [availableGroups, tasks, setExpandedGroups]);
 
-  // Funciones de utilidad para filtrado
-  const isOverdue = (dueDate: string, completed: boolean) => {
-    if (completed) return false;
-    const today = new Date();
-    const due = new Date(dueDate);
-    today.setHours(0, 0, 0, 0);
-    due.setHours(0, 0, 0, 0);
-    return due < today;
-  };
-
-  const isInDateRange = (task: Task, filter: 'all' | 'today' | 'week' | 'month') => {
-    if (filter === 'all') return true;
-    if (!task.dueDate && !task.startDate) return false;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const taskDate = new Date(task.dueDate || task.startDate!);
-    taskDate.setHours(0, 0, 0, 0);
-
-    switch (filter) {
-      case 'today':
-        return taskDate.getTime() === today.getTime();
-      case 'week':
-        const weekStart = new Date(today);
-        weekStart.setDate(today.getDate() - today.getDay());
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        return taskDate >= weekStart && taskDate <= weekEnd;
-      case 'month':
-        return taskDate.getMonth() === today.getMonth() && taskDate.getFullYear() === today.getFullYear();
-      default:
-        return true;
-    }
-  };
-
-  // Filtrado de tareas
-  const filteredTasks = tasks.filter(task => {
+  // Obtener tareas filtradas del store
+  const filteredTasks = getFilteredTasks().filter(task => {
     // Excluir subtareas - solo mostrar tareas principales
-    if (task.parentId) return false;
-    
-    // Filtro por completado
-    if (!showCompleted && task.completed) return false;
-    
-    // Filtro por vencidas
-    if (showOverdue && (!task.dueDate || !isOverdue(task.dueDate, task.completed))) return false;
-    
-    // Filtro por etiquetas
-    if (selectedTags.size > 0) {
-      const taskTagIds = task.tags?.map(({ tag }) => tag.id) || [];
-      if (!Array.from(selectedTags).some(tagId => taskTagIds.includes(tagId))) return false;
-    }
-    
-    // Filtro por grupos
-    if (selectedGroups.size > 0) {
-      if (!task.group || !selectedGroups.has(task.group.id)) return false;
-    }
-    
-    // Filtro por prioridades
-    if (selectedPriorities.size > 0) {
-      if (!selectedPriorities.has(task.priority)) return false;
-    }
-    
-    // Filtro por fecha
-    if (!isInDateRange(task, dateFilter)) return false;
-    
-    return true;
+    return !task.parentId;
   });
 
   // Agrupación de tareas
@@ -178,52 +166,27 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
       return groups;
     }, {} as Record<string, { group: TaskGroup | null; tasks: Task[] }>) : {};
 
-  // Handlers para selección múltiple
-  const toggleTaskSelection = useCallback((taskId: string) => {
-    setSelectedTasks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(taskId)) {
-        newSet.delete(taskId);
-      } else {
-        newSet.add(taskId);
-      }
-      return newSet;
-    });
-  }, []);
+
+
+  // Handlers para selección múltiple - usando función del store
 
   const clearSelection = useCallback(() => {
-    setSelectedTasks(new Set());
-  }, []);
+    clearSelectedTasks();
+  }, [clearSelectedTasks]);
 
   const exitMultiSelect = useCallback(() => {
     setIsMultiSelectMode?.(false);
-    setSelectedTasks(new Set());
-  }, [setIsMultiSelectMode]);
+    clearSelectedTasks();
+  }, [setIsMultiSelectMode, clearSelectedTasks]);
 
   // Handlers para expansión
   const toggleExpanded = useCallback((taskId: string) => {
-    setExpandedTasks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(taskId)) {
-        newSet.delete(taskId);
-      } else {
-        newSet.add(taskId);
-      }
-      return newSet;
-    });
-  }, []);
+    toggleTaskExpansion(taskId);
+  }, [toggleTaskExpansion]);
 
   const toggleGroupExpanded = useCallback((groupId: string) => {
-    setExpandedGroups(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(groupId)) {
-        newSet.delete(groupId);
-      } else {
-        newSet.add(groupId);
-      }
-      return newSet;
-    });
-  }, []);
+    toggleGroupExpansion(groupId);
+  }, [toggleGroupExpansion]);
 
   // Handlers para edición
   const startInlineEditing = useCallback((task: Task, event: React.MouseEvent) => {
@@ -232,61 +195,55 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
   }, []);
 
   const cancelInlineEditing = useCallback((taskId: string) => {
-    setInlineEditingTasks(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(taskId);
-      return newSet;
-    });
-  }, []);
+    removeInlineEditingTask(taskId);
+  }, [removeInlineEditingTask]);
 
   const handleInlineTaskSave = useCallback(async (taskId: string, taskData: any) => {
+    console.log('🔥 TaskListContainer - handleInlineTaskSave called', { taskId, taskData });
+    console.log('🔍 TaskListContainer - Available tasks:', tasks.map(t => ({ id: t.id, title: t.title })));
     try {
       const task = tasks.find(t => t.id === taskId);
-      if (task && onTaskUpdate) {
+      console.log('🔍 TaskListContainer - Found task:', task);
+      console.log('🔍 TaskListContainer - onTaskUpdate available:', !!onTaskUpdate);
+      
+      if (onTaskUpdate) {
+        console.log('✅ TaskListContainer - Calling onTaskUpdate directly (bypassing task check)...');
         await onTaskUpdate(taskId, taskData);
-        setInlineEditingTasks(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(taskId);
-          return newSet;
-        });
+        console.log('✅ TaskListContainer - onTaskUpdate completed, removing from inline editing');
+        removeInlineEditingTask(taskId);
+        console.log('✅ TaskListContainer - Task removed from inline editing');
+      } else {
+        console.log('❌ TaskListContainer - Missing onTaskUpdate function');
       }
     } catch (error) {
-      console.error('Error saving task:', error);
+      console.error('❌ TaskListContainer - Error saving task:', error);
     }
-  }, [tasks, onTaskEdit]);
+  }, [tasks, onTaskUpdate, removeInlineEditingTask]);
 
   // Handlers para subtareas
   const startCreatingSubtask = useCallback((taskId: string) => {
-    setCreatingSubtasks(prev => new Set(prev).add(taskId));
-  }, []);
+    addCreatingSubtask(taskId);
+  }, [addCreatingSubtask]);
 
   const cancelCreatingSubtask = useCallback((taskId: string) => {
-    setCreatingSubtasks(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(taskId);
-      return newSet;
-    });
-  }, []);
+    removeCreatingSubtask(taskId);
+  }, [removeCreatingSubtask]);
 
   const handleSubtaskCreate = useCallback(async (parentId: string, subtaskData: any) => {
     try {
       await onSubtaskCreate(parentId, subtaskData);
-      setCreatingSubtasks(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(parentId);
-        return newSet;
-      });
+      removeCreatingSubtask(parentId);
     } catch (error) {
       console.error('Error creating subtask:', error);
     }
-  }, [onSubtaskCreate]);
+  }, [onSubtaskCreate, removeCreatingSubtask]);
 
   // Handlers para edición de título
   const startEditingTitle = useCallback((task: Task, event: React.MouseEvent) => {
     event.stopPropagation();
-    setEditingTasks(prev => new Set(prev).add(task.id));
-    setEditingValues(prev => ({ ...prev, [task.id]: task.title }));
-  }, []);
+    addEditingTask(task.id);
+    setEditingValue(task.id, task.title);
+  }, [addEditingTask, setEditingValue]);
 
   const saveEditingTitle = useCallback((taskId: string) => {
     const newTitle = editingValues[taskId]?.trim();
@@ -300,17 +257,9 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
   }, [editingValues, tasks, onTaskEdit]);
 
   const cancelEditingTitle = useCallback((taskId: string) => {
-    setEditingTasks(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(taskId);
-      return newSet;
-    });
-    setEditingValues(prev => {
-      const newValues = { ...prev };
-      delete newValues[taskId];
-      return newValues;
-    });
-  }, []);
+    removeEditingTask(taskId);
+    removeEditingValue(taskId);
+  }, [removeEditingTask, removeEditingValue]);
 
   const handleTitleKeyDown = useCallback((event: React.KeyboardEvent, taskId: string) => {
     if (event.key === 'Enter') {
@@ -323,115 +272,61 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
   }, [saveEditingTitle, cancelEditingTitle]);
 
   const handleTitleChange = useCallback((taskId: string, value: string) => {
-    setEditingValues(prev => ({ ...prev, [taskId]: value }));
-  }, []);
+    setEditingValue(taskId, value);
+  }, [setEditingValue]);
 
   // Handlers para menús y UI
   const toggleContextMenu = useCallback((taskId: string, event: React.MouseEvent) => {
     event.stopPropagation();
-    setOpenMenus(prev => {
-      const newSet = new Set<string>();
-      if (!prev.has(taskId)) {
-        newSet.add(taskId);
-      }
-      return newSet;
-    });
-  }, []);
+    if (openMenus.has(taskId)) {
+      closeAllMenus();
+    } else {
+      setOpenMenu(taskId);
+    }
+  }, [openMenus, closeAllMenus, setOpenMenu]);
 
   const handleHistoryToggle = useCallback((taskId: string) => {
-    setVisibleHistory(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(taskId)) {
-        newSet.delete(taskId);
-      } else {
-        newSet.add(taskId);
-      }
-      return newSet;
-    });
-  }, []);
+    toggleVisibleHistory(taskId);
+  }, [toggleVisibleHistory]);
 
   const handleTaskHoverEnter = useCallback((taskId: string) => {
-    setHoveredTasks(prev => new Set(prev).add(taskId));
-  }, []);
+    addHoveredTask(taskId);
+  }, [addHoveredTask]);
 
   const handleTaskHoverLeave = useCallback(() => {
-    setHoveredTasks(new Set());
-  }, []);
+    clearHoveredTasks();
+  }, [clearHoveredTasks]);
 
-  const toggleTaskClick = useCallback((taskId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    setClickedTasks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(taskId)) {
-        newSet.delete(taskId);
-      } else {
-        newSet.add(taskId);
-      }
-      return newSet;
-    });
-  }, []);
+  // toggleTaskClick viene del store de Zustand
 
   const handleTaskToggleWithAnimation = useCallback(async (taskId: string, completed: boolean) => {
-    setCompletingTasks(prev => new Set(prev).add(taskId));
+    addCompletingTask(taskId);
     
     try {
       await onTaskToggle(taskId, completed);
     } finally {
       setTimeout(() => {
-        setCompletingTasks(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(taskId);
-          return newSet;
-        });
+        removeCompletingTask(taskId);
       }, 300);
     }
-  }, [onTaskToggle]);
+  }, [onTaskToggle, addCompletingTask, removeCompletingTask]);
 
   // Handlers para filtros
   const handleTagFilterChange = useCallback((tagId: string) => {
-    setSelectedTags(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(tagId)) {
-        newSet.delete(tagId);
-      } else {
-        newSet.add(tagId);
-      }
-      return newSet;
-    });
-  }, []);
+    toggleSelectedTag(tagId);
+  }, [toggleSelectedTag]);
 
   const handleGroupFilterChange = useCallback((groupId: string) => {
-    setSelectedGroups(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(groupId)) {
-        newSet.delete(groupId);
-      } else {
-        newSet.add(groupId);
-      }
-      return newSet;
-    });
-  }, []);
+    toggleSelectedGroup(groupId);
+  }, [toggleSelectedGroup]);
 
   const handlePriorityFilterChange = useCallback((priority: Priority) => {
-    setSelectedPriorities(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(priority)) {
-        newSet.delete(priority);
-      } else {
-        newSet.add(priority);
-      }
-      return newSet;
-    });
-  }, []);
+    toggleSelectedPriority(priority);
+  }, [toggleSelectedPriority]);
 
-  const clearAllFilters = useCallback(() => {
-    setSelectedTags(new Set());
-    setSelectedGroups(new Set());
-    setSelectedPriorities(new Set());
-    setShowCompleted(true);
-    setShowOverdue(false);
-    setDateFilter('all');
-  }, []);
+  const clearAllFiltersHandler = useCallback(() => {
+    clearAllFilters();
+  }, [clearAllFilters]);
 
   // Handlers para acciones masivas
   const handleBulkEdit = useCallback(() => {
@@ -446,8 +341,8 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
 
   const handleBulkDelete = useCallback(() => {
     onBulkDelete(Array.from(selectedTasks));
-    setSelectedTasks(new Set());
-  }, [selectedTasks, onBulkDelete]);
+    clearSelectedTasks();
+  }, [selectedTasks, onBulkDelete, clearSelectedTasks]);
 
   return (
     <div className="space-y-6">
@@ -469,7 +364,7 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
         ) : isGroupedView ? (
           // Vista agrupada
           Object.entries(groupedTasks).map(([groupKey, { group, tasks: groupTasks }]) => {
-            const isGroupExpanded = expandedGroups.has(groupKey);
+            const isGroupExpanded = expandedGroups instanceof Set ? expandedGroups.has(groupKey) : false;
             const completedCount = groupTasks.filter(task => task.completed).length;
             
             return (
@@ -491,41 +386,12 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
                         availableTags={availableTags}
                         availableGroups={availableGroups}
                         isGroupedView={isGroupedView}
-                        isMultiSelectMode={isMultiSelectMode}
-                        selectedTasks={selectedTasks}
-                        expandedTasks={expandedTasks}
-                        editingTasks={editingTasks}
-                        editingValues={editingValues}
-                        inlineEditingTasks={inlineEditingTasks}
-                        creatingSubtasks={creatingSubtasks}
-                        completingTasks={completingTasks}
-                        animatingProgress={animatingProgress}
-                        openMenus={openMenus}
-                        visibleHistory={visibleHistory}
-                        hoveredTasks={hoveredTasks}
-                        clickedTasks={clickedTasks}
-                        onTaskToggle={onTaskToggle}
-                        // onTaskEdit={onTaskEdit} // Removed to prevent modal duplication - using inline editing only
+                        onTaskToggle={handleTaskToggleWithAnimation}
+                        onTaskEdit={onTaskEdit}
                         onTaskDelete={onTaskDelete}
                         onSubtaskCreate={onSubtaskCreate}
-                        onToggleExpanded={toggleExpanded}
-                        onToggleTaskSelection={toggleTaskSelection}
-                        onStartInlineEditing={startInlineEditing}
-                        onCancelInlineEditing={cancelInlineEditing}
                         onInlineTaskSave={handleInlineTaskSave}
-                        onStartCreatingSubtask={startCreatingSubtask}
-                        onCancelCreatingSubtask={cancelCreatingSubtask}
                         onHandleSubtaskCreate={handleSubtaskCreate}
-                        onStartEditingTitle={startEditingTitle}
-                        onSaveEditingTitle={saveEditingTitle}
-                        onCancelEditingTitle={cancelEditingTitle}
-                        onHandleTitleKeyDown={handleTitleKeyDown}
-                        onHandleTitleChange={handleTitleChange}
-                        onToggleContextMenu={toggleContextMenu}
-                        onHandleHistoryToggle={handleHistoryToggle}
-                        onHandleTaskHoverEnter={handleTaskHoverEnter}
-                        onHandleTaskHoverLeave={handleTaskHoverLeave}
-                        onToggleTaskClick={toggleTaskClick}
                         onHandleTaskToggleWithAnimation={handleTaskToggleWithAnimation}
                       />
                     ))}
@@ -543,41 +409,12 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
               availableTags={availableTags}
               availableGroups={availableGroups}
               isGroupedView={isGroupedView}
-              isMultiSelectMode={isMultiSelectMode}
-              selectedTasks={selectedTasks}
-              expandedTasks={expandedTasks}
-              editingTasks={editingTasks}
-              editingValues={editingValues}
-              inlineEditingTasks={inlineEditingTasks}
-              creatingSubtasks={creatingSubtasks}
-              completingTasks={completingTasks}
-              animatingProgress={animatingProgress}
-              openMenus={openMenus}
-              visibleHistory={visibleHistory}
-              hoveredTasks={hoveredTasks}
-              clickedTasks={clickedTasks}
-              onTaskToggle={onTaskToggle}
-              // onTaskEdit={onTaskEdit} // Removed to prevent modal duplication - using inline editing only
+              onTaskToggle={handleTaskToggleWithAnimation}
+              onTaskEdit={onTaskEdit}
               onTaskDelete={onTaskDelete}
               onSubtaskCreate={onSubtaskCreate}
-              onToggleExpanded={toggleExpanded}
-              onToggleTaskSelection={toggleTaskSelection}
-              onStartInlineEditing={startInlineEditing}
-              onCancelInlineEditing={cancelInlineEditing}
               onInlineTaskSave={handleInlineTaskSave}
-              onStartCreatingSubtask={startCreatingSubtask}
-              onCancelCreatingSubtask={cancelCreatingSubtask}
               onHandleSubtaskCreate={handleSubtaskCreate}
-              onStartEditingTitle={startEditingTitle}
-              onSaveEditingTitle={saveEditingTitle}
-              onCancelEditingTitle={cancelEditingTitle}
-              onHandleTitleKeyDown={handleTitleKeyDown}
-              onHandleTitleChange={handleTitleChange}
-              onToggleContextMenu={toggleContextMenu}
-              onHandleHistoryToggle={handleHistoryToggle}
-              onHandleTaskHoverEnter={handleTaskHoverEnter}
-              onHandleTaskHoverLeave={handleTaskHoverLeave}
-              onToggleTaskClick={toggleTaskClick}
               onHandleTaskToggleWithAnimation={handleTaskToggleWithAnimation}
             />
           ))
@@ -588,13 +425,9 @@ export const TaskListContainer: React.FC<TaskListContainerProps> = ({
 
       {/* Componente de selección múltiple */}
       <TaskMultiSelect
-        isMultiSelectMode={isMultiSelectMode}
-        selectedTasks={selectedTasks}
         tasks={filteredTasks}
-        onClearSelection={clearSelection}
         onBulkEdit={handleBulkEdit}
         onBulkDelete={handleBulkDelete}
-        onExitMultiSelect={exitMultiSelect}
       />
     </div>
   );

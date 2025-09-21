@@ -1,25 +1,13 @@
 import React from 'react';
 import { Filter, X, Tag, Users, Calendar, AlertCircle } from 'lucide-react';
 import { Task, Tag as TagType, TaskGroup, Priority } from '../types';
+import { useFilterStore } from '../stores/useFilterStore';
 
 interface TaskFiltersProps {
   tasks: Task[];
   filteredTasks: Task[];
   availableTags: TagType[];
   availableGroups: TaskGroup[];
-  selectedTags: Set<string>;
-  selectedGroups: Set<string>;
-  selectedPriorities: Set<Priority>;
-  showCompleted: boolean;
-  showOverdue: boolean;
-  dateFilter: 'all' | 'today' | 'week' | 'month';
-  onTagFilterChange: (tagId: string) => void;
-  onGroupFilterChange: (groupId: string) => void;
-  onPriorityFilterChange: (priority: Priority) => void;
-  onShowCompletedChange: (show: boolean) => void;
-  onShowOverdueChange: (show: boolean) => void;
-  onDateFilterChange: (filter: 'all' | 'today' | 'week' | 'month') => void;
-  onClearAllFilters: () => void;
 }
 
 /**
@@ -30,21 +18,24 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
   tasks,
   filteredTasks,
   availableTags,
-  availableGroups,
-  selectedTags,
-  selectedGroups,
-  selectedPriorities,
-  showCompleted,
-  showOverdue,
-  dateFilter,
-  onTagFilterChange,
-  onGroupFilterChange,
-  onPriorityFilterChange,
-  onShowCompletedChange,
-  onShowOverdueChange,
-  onDateFilterChange,
-  onClearAllFilters
+  availableGroups
 }) => {
+  // Obtener estado y acciones del store de filtros
+  const {
+    selectedTags,
+    selectedGroups,
+    selectedPriorities,
+    showCompleted,
+    showOverdue,
+    dateFilter,
+    toggleTagFilter,
+    toggleGroupFilter,
+    togglePriorityFilter,
+    setShowCompleted,
+    setShowOverdue,
+    setDateFilter,
+    clearAllFilters
+  } = useFilterStore();
   const hasActiveFilters = 
     selectedTags.size > 0 || 
     selectedGroups.size > 0 || 
@@ -96,7 +87,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
         
         {hasActiveFilters && (
           <button
-            onClick={onClearAllFilters}
+            onClick={clearAllFilters}
             className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-800 transition-colors"
           >
             <X className="w-4 h-4" />
@@ -118,7 +109,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
                 <input
                   type="checkbox"
                   checked={selectedTags.has(tag.id)}
-                  onChange={() => onTagFilterChange(tag.id)}
+                  onChange={() => toggleTagFilter(tag.id)}
                   className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                 />
                 <div className="flex items-center space-x-1">
@@ -145,7 +136,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
                 <input
                   type="checkbox"
                   checked={selectedGroups.has(group.id)}
-                  onChange={() => onGroupFilterChange(group.id)}
+                  onChange={() => toggleGroupFilter(group.id)}
                   className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                 />
                 <div className="flex items-center space-x-1">
@@ -172,7 +163,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
                 <input
                   type="checkbox"
                   checked={selectedPriorities.has(priority)}
-                  onChange={() => onPriorityFilterChange(priority)}
+                  onChange={() => togglePriorityFilter(priority)}
                   className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                 />
                 <span className={`text-xs px-2 py-1 rounded-full border ${getPriorityColor(priority)}`}>
@@ -194,7 +185,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
               <input
                 type="checkbox"
                 checked={showCompleted}
-                onChange={(e) => onShowCompletedChange(e.target.checked)}
+                onChange={(e) => setShowCompleted(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
               />
               <span className="text-sm text-gray-700">Mostrar completadas</span>
@@ -204,7 +195,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
               <input
                 type="checkbox"
                 checked={showOverdue}
-                onChange={(e) => onShowOverdueChange(e.target.checked)}
+                onChange={(e) => setShowOverdue(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
               />
               <span className="text-sm text-gray-700">Solo vencidas</span>
@@ -213,7 +204,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
             <div>
               <select
                 value={dateFilter}
-                onChange={(e) => onDateFilterChange(e.target.value as 'all' | 'today' | 'week' | 'month')}
+                onChange={(e) => setDateFilter(e.target.value as 'all' | 'today' | 'week' | 'month')}
                 className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="all">Todas las fechas</option>
@@ -241,7 +232,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
                 >
                   {tag.name}
                   <button
-                    onClick={() => onTagFilterChange(tagId)}
+                    onClick={() => toggleTagFilter(tagId)}
                     className="ml-1 hover:bg-black hover:bg-opacity-20 rounded-full p-0.5"
                   >
                     <X className="w-3 h-3" />
@@ -265,7 +256,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
                 >
                   {group.name}
                   <button
-                    onClick={() => onGroupFilterChange(groupId)}
+                    onClick={() => toggleGroupFilter(groupId)}
                     className="ml-1 hover:bg-black hover:bg-opacity-10 rounded-full p-0.5"
                   >
                     <X className="w-3 h-3" />
@@ -281,7 +272,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
               >
                 {getPriorityLabel(priority)}
                 <button
-                  onClick={() => onPriorityFilterChange(priority)}
+                  onClick={() => togglePriorityFilter(priority)}
                   className="ml-1 hover:bg-black hover:bg-opacity-10 rounded-full p-0.5"
                 >
                   <X className="w-3 h-3" />
@@ -293,7 +284,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 border border-gray-200">
                 Ocultar completadas
                 <button
-                  onClick={() => onShowCompletedChange(true)}
+                  onClick={() => setShowCompleted(true)}
                   className="ml-1 hover:bg-black hover:bg-opacity-10 rounded-full p-0.5"
                 >
                   <X className="w-3 h-3" />
@@ -305,7 +296,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
                 Solo vencidas
                 <button
-                  onClick={() => onShowOverdueChange(false)}
+                  onClick={() => setShowOverdue(false)}
                   className="ml-1 hover:bg-black hover:bg-opacity-10 rounded-full p-0.5"
                 >
                   <X className="w-3 h-3" />
@@ -317,7 +308,7 @@ export const TaskFilters: React.FC<TaskFiltersProps> = ({
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
                 {getDateFilterLabel(dateFilter)}
                 <button
-                  onClick={() => onDateFilterChange('all')}
+                  onClick={() => setDateFilter('all')}
                   className="ml-1 hover:bg-black hover:bg-opacity-10 rounded-full p-0.5"
                 >
                   <X className="w-3 h-3" />

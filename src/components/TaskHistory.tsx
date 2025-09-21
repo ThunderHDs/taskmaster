@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, MessageSquare, User, Edit, Plus, Check, X } from 'lucide-react';
+import { logger } from '@/lib/logger';
 
 interface ActivityLog {
   id: string;
@@ -28,15 +29,18 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ taskId, isVisible, onClose })
   const fetchHistory = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch(`/api/tasks/${taskId}/history`);
+      const url = `/api/tasks/${taskId}/history`;
+      
+      const response = await fetch(url);
+      
       if (response.ok) {
         const data = await response.json();
         setActivities(data);
       } else {
-        console.error('Failed to fetch history:', response.status, response.statusText);
+        logger.error('Failed to fetch task history:', response.status, response.statusText);
       }
     } catch (error) {
-      console.error('Error fetching task history:', error);
+      logger.error('Error fetching task history:', error);
     } finally {
       setIsLoading(false);
     }
@@ -44,13 +48,10 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ taskId, isVisible, onClose })
 
   // Add new comment
   const handleAddComment = async () => {
-    console.log('handleAddComment called');
     if (!newComment.trim()) {
-      console.log('No comment to send - empty or whitespace only');
       return;
     }
 
-    console.log('Sending comment:', newComment.trim());
     try {
       const response = await fetch(`/api/tasks/${taskId}/history`, {
         method: 'POST',
@@ -64,19 +65,15 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ taskId, isVisible, onClose })
         }),
       });
 
-      console.log('Response status:', response.status);
       if (response.ok) {
-        console.log('Comment added successfully');
         setNewComment('');
         setIsAddingComment(false);
         fetchHistory(); // Refresh history
       } else {
-        console.error('Failed to add comment:', response.status, response.statusText);
-        const errorData = await response.text();
-        console.error('Error details:', errorData);
+        logger.error('Failed to add comment:', response.status, response.statusText);
       }
     } catch (error) {
-      console.error('Error adding comment:', error);
+      logger.error('Error adding comment:', error);
     }
   };
 
@@ -153,8 +150,16 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ taskId, isVisible, onClose })
   };
 
   useEffect(() => {
+    console.log('🔄 TaskHistory useEffect triggered:');
+    console.log('   isVisible:', isVisible);
+    console.log('   taskId:', taskId);
+    console.log('   typeof taskId:', typeof taskId);
+    
     if (isVisible) {
+      console.log('✅ TaskHistory - Calling fetchHistory because isVisible is true');
       fetchHistory();
+    } else {
+      console.log('⏸️ TaskHistory - Skipping fetchHistory because isVisible is false');
     }
   }, [isVisible, taskId]);
 

@@ -8,12 +8,16 @@ import {
   Calendar, 
   CheckSquare, 
   History, 
-  MoreVertical 
+  MoreVertical,
+  Plus
 } from 'lucide-react';
 import { Task, Tag as TagType, TaskGroup, Priority } from '../types';
 import { InlineTaskEditForm } from './InlineTaskEditForm';
 import { SubtaskCreateForm } from './SubtaskCreateForm';
 import { TaskHistory } from './TaskHistory';
+import { useUIStore } from '../stores/useUIStore';
+import { useTaskStore } from '../stores/useTaskStore';
+import { canHaveSubtasks } from '../lib/utils';
 
 interface TaskItemProps {
   task: Task;
@@ -21,43 +25,15 @@ interface TaskItemProps {
   availableTags: TagType[];
   availableGroups: TaskGroup[];
   isGroupedView?: boolean;
-  isMultiSelectMode: boolean;
-  selectedTasks: Set<string>;
-  expandedTasks: Set<string>;
-  editingTasks: Set<string>;
-  editingValues: Record<string, string>;
-  inlineEditingTasks: Set<string>;
-  creatingSubtasks: Set<string>;
-  completingTasks: Set<string>;
-  animatingProgress: Set<string>;
-  openMenus: Set<string>;
-  visibleHistory: Set<string>;
-  hoveredTasks: Set<string>;
-  clickedTasks: Set<string>;
   
-  // Event handlers
+  // Event handlers que no están en el store
   onTaskToggle: (taskId: string, completed: boolean) => void;
   onTaskEdit: (task: Task) => void;
   onTaskDelete: (taskId: string) => void;
   onSubtaskCreate: (parentId: string, subtaskData: any) => Promise<void>;
-  onToggleExpanded: (taskId: string) => void;
-  onToggleTaskSelection: (taskId: string) => void;
-  onStartInlineEditing: (task: Task, event: React.MouseEvent) => void;
-  onCancelInlineEditing: (taskId: string) => void;
+  onToggleExpanded?: (taskId: string) => void;
   onInlineTaskSave: (taskId: string, taskData: any) => void;
-  onStartCreatingSubtask: (taskId: string) => void;
-  onCancelCreatingSubtask: (taskId: string) => void;
   onHandleSubtaskCreate: (parentId: string, subtaskData: any) => Promise<void>;
-  onStartEditingTitle: (task: Task, event: React.MouseEvent) => void;
-  onSaveEditingTitle: (taskId: string) => void;
-  onCancelEditingTitle: (taskId: string) => void;
-  onHandleTitleKeyDown: (event: React.KeyboardEvent, taskId: string) => void;
-  onHandleTitleChange: (taskId: string, value: string) => void;
-  onToggleContextMenu: (taskId: string, event: React.MouseEvent) => void;
-  onHandleHistoryToggle: (taskId: string) => void;
-  onHandleTaskHoverEnter: (taskId: string) => void;
-  onHandleTaskHoverLeave: () => void;
-  onToggleTaskClick: (taskId: string, event: React.MouseEvent) => void;
   onHandleTaskToggleWithAnimation: (taskId: string, completed: boolean) => void;
 }
 
@@ -71,43 +47,61 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   availableTags,
   availableGroups,
   isGroupedView = false,
-  isMultiSelectMode,
-  selectedTasks,
-  expandedTasks,
-  editingTasks,
-  editingValues,
-  inlineEditingTasks,
-  creatingSubtasks,
-  completingTasks,
-  animatingProgress,
-  openMenus,
-  visibleHistory,
-  hoveredTasks,
-  clickedTasks,
   onTaskToggle,
   onTaskEdit,
   onTaskDelete,
   onSubtaskCreate,
   onToggleExpanded,
-  onToggleTaskSelection,
-  onStartInlineEditing,
-  onCancelInlineEditing,
   onInlineTaskSave,
-  onStartCreatingSubtask,
-  onCancelCreatingSubtask,
   onHandleSubtaskCreate,
-  onStartEditingTitle,
-  onSaveEditingTitle,
-  onCancelEditingTitle,
-  onHandleTitleKeyDown,
-  onHandleTitleChange,
-  onToggleContextMenu,
-  onHandleHistoryToggle,
-  onHandleTaskHoverEnter,
-  onHandleTaskHoverLeave,
-  onToggleTaskClick,
   onHandleTaskToggleWithAnimation
 }) => {
+  
+  // Obtener estado y acciones del store de tareas
+  const {
+    // Estados UI generales
+    isMultiSelectMode,
+    tasks, // Necesario para calcular niveles de profundidad
+    // Acciones UI generales
+    toggleTaskSelection
+  } = useTaskStore();
+  
+  // Obtener estado y acciones del store de tareas
+  const {
+    ui: {
+      selectedTasks,
+      expandedTasks,
+      editingTasks,
+      editingValues,
+      inlineEditingTasks,
+      creatingSubtasks,
+      completingTasks,
+      animatingProgress,
+      openMenus,
+      visibleHistory,
+      hoveredTasks,
+      clickedTasks
+    },
+    // Acciones
+     toggleTaskExpansion: toggleExpandedTask,
+     addEditingTask,
+     removeEditingTask,
+     setEditingValue,
+     removeEditingValue,
+     toggleInlineEditing,
+     removeInlineEditingTask,
+     addCreatingSubtask,
+     removeCreatingSubtask,
+     setOpenMenu,
+     closeAllMenus,
+     toggleVisibleHistory,
+     addHoveredTask,
+     clearHoveredTasks,
+     toggleTaskClick
+   } = useTaskStore();
+  
+  // Función por defecto para toggle expanded si no se proporciona
+  const handleToggleExpanded = onToggleExpanded || ((taskId: string) => toggleExpandedTask(taskId));
   
   /**
    * Obtiene el color de texto según la prioridad de la tarea
@@ -274,6 +268,52 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   const subtaskProgress = hasSubtasks ? calculateSubtaskProgress(task.subtasks) : 0;
   const progressBarStyles = hasSubtasks ? getProgressBarStyles(subtaskProgress, task.id) : {};
 
+  // Handlers locales que usan las acciones del store
+  const handleToggleTaskSelection = () => toggleTaskSelection(task.id);
+  const handleStartInlineEditing = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    toggleInlineEditing(task.id);
+  };
+  const handleCancelInlineEditing = () => removeInlineEditingTask(task.id);
+  const handleStartCreatingSubtask = () => addCreatingSubtask(task.id);
+  const handleCancelCreatingSubtask = () => removeCreatingSubtask(task.id);
+  const handleStartEditingTitle = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    addEditingTask(task.id);
+    setEditingValue(task.id, task.title);
+  };
+  const handleSaveEditingTitle = () => {
+    removeEditingTask(task.id);
+    removeEditingValue(task.id);
+  };
+  const handleCancelEditingTitle = () => {
+    removeEditingTask(task.id);
+    removeEditingValue(task.id);
+  };
+  const handleTitleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      handleSaveEditingTitle();
+    } else if (event.key === 'Escape') {
+      handleCancelEditingTitle();
+    }
+  };
+  const handleTitleChange = (value: string) => setEditingValue(task.id, value);
+  const handleToggleContextMenu = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (openMenus.has(task.id)) {
+      closeAllMenus();
+    } else {
+      setOpenMenu(task.id);
+    }
+  };
+  const handleHistoryToggle = () => toggleVisibleHistory(task.id);
+  const handleTaskHoverEnter = () => addHoveredTask(task.id);
+  const handleTaskHoverLeave = () => clearHoveredTasks();
+  const handleToggleTaskClick = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    toggleTaskClick(task.id, event);
+  };
+
   return (
     <div key={task.id} className={`${level > 0 ? 'ml-6 border-l-2 border-gray-200 pl-4' : ''}`}>
       <div 
@@ -284,12 +324,12 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         }`}
         style={progressBarStyles}
         data-task-container
-        onMouseEnter={() => onHandleTaskHoverEnter(task.id)}
-        onMouseLeave={onHandleTaskHoverLeave}
+        onMouseEnter={handleTaskHoverEnter}
+        onMouseLeave={handleTaskHoverLeave}
         onClick={(e) => {
           const target = e.target as HTMLElement;
           if (!target.closest('[data-title-clickable]') && !target.closest('[data-editing-input]')) {
-            onToggleTaskClick(task.id, e);
+            handleToggleTaskClick(e);
           }
         }}
       >
@@ -300,7 +340,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 <input
                   type="checkbox"
                   checked={selectedTasks.has(task.id)}
-                  onChange={() => onToggleTaskSelection(task.id)}
+                  onChange={handleToggleTaskSelection}
                   className="w-4 h-4 text-blue-600 bg-blue-100 border-blue-300 rounded focus:ring-blue-500 focus:ring-2 transition-all duration-200 cursor-pointer"
                 />
               </div>
@@ -308,7 +348,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             
             {hasSubtasks && (
               <button
-                onClick={() => onToggleExpanded(task.id)}
+                onClick={() => handleToggleExpanded(task.id)}
                 className="mt-1 p-1 hover:bg-gray-100 rounded transition-colors"
               >
                 {isExpanded ? (
@@ -343,9 +383,9 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                   <input
                     type="text"
                     value={editingValues[task.id] || ''}
-                    onChange={(e) => onHandleTitleChange(task.id, e.target.value)}
-                    onKeyDown={(e) => onHandleTitleKeyDown(e, task.id)}
-                    onBlur={() => onSaveEditingTitle(task.id)}
+                    onChange={(e) => handleTitleChange(e.target.value)}
+                    onKeyDown={handleTitleKeyDown}
+                    onBlur={handleSaveEditingTitle}
                     className={`text-sm font-medium bg-transparent border-none outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 rounded px-1 -mx-1 ${
                       task.completed ? 'line-through text-gray-500' : getPriorityTextColor(task.priority)
                     }`}
@@ -357,10 +397,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                     className={`text-sm font-medium cursor-pointer hover:bg-gray-100 rounded px-1 -mx-1 transition-colors ${
                       task.completed ? 'line-through text-gray-500' : getPriorityTextColor(task.priority)
                     }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStartInlineEditing(task, e);
-                    }}
+                    onClick={handleStartInlineEditing}
                     data-title-clickable
                   >
                     {task.title}
@@ -463,10 +500,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             <div className="flex items-center gap-1">
               {!task.parentId && (
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onHandleHistoryToggle(task.id);
-                  }}
+                  onClick={handleHistoryToggle}
                   className={`p-1 transition-colors rounded hover:bg-gray-100 ${
                     visibleHistory.has(task.id) 
                       ? 'text-blue-600 bg-blue-50' 
@@ -479,21 +513,32 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 </button>
               )}
               
+              {/* Botón para agregar subtarea - fuera del menú contextual */}
+              {canHaveSubtasks(task, tasks) && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addCreatingSubtask(task.id);
+                  }}
+                  className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors rounded"
+                  title="Agregar subtarea"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
+              
               <div className="relative" data-context-menu>
                 <button
-                  onClick={(e) => onToggleContextMenu(task.id, e)}
+                  onClick={handleToggleContextMenu}
                   className="p-1 text-gray-400 hover:text-gray-600 transition-colors rounded hover:bg-gray-100"
                 >
                   <MoreVertical className="w-4 h-4" />
                 </button>
               
                 {openMenus.has(task.id) && (
-                  <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-md shadow-lg z-50 min-w-[100px]">
+                  <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-md shadow-lg z-50 min-w-[120px]">
                     <button
-                      onClick={(e) => {
-                        onStartInlineEditing(task, e);
-                        // Cerrar menú - esto se manejará en el componente padre
-                      }}
+                      onClick={handleStartInlineEditing}
                       className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                     >
                       Edit
@@ -502,7 +547,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                       onClick={(e) => {
                         e.stopPropagation();
                         onTaskDelete(task.id);
-                        // Cerrar menú - esto se manejará en el componente padre
+                        closeAllMenus();
                       }}
                       className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
                     >
@@ -522,7 +567,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               availableTags={availableTags}
               availableGroups={availableGroups}
               onSave={(taskData) => onInlineTaskSave(task.id, taskData)}
-              onCancel={() => onCancelInlineEditing(task.id)}
+              onCancel={handleCancelInlineEditing}
             />
           </div>
         )}
@@ -533,8 +578,8 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               parentTask={task}
               availableTags={availableTags}
               availableGroups={availableGroups}
-              onSave={(subtaskData) => onHandleSubtaskCreate(task.id, subtaskData)}
-              onCancel={() => onCancelCreatingSubtask(task.id)}
+              onSave={onHandleSubtaskCreate}
+              onCancel={handleCancelCreatingSubtask}
             />
           </div>
         )}
@@ -545,7 +590,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             <TaskHistory
               taskId={task.id}
               isVisible={true}
-              onClose={() => onHandleHistoryToggle(task.id)}
+              onClose={handleHistoryToggle}
             />
           </div>
         )}
@@ -577,24 +622,9 @@ export const TaskItem: React.FC<TaskItemProps> = ({
                 onTaskEdit={onTaskEdit}
                 onTaskDelete={onTaskDelete}
                 onSubtaskCreate={onSubtaskCreate}
-                onToggleExpanded={onToggleExpanded}
-                onToggleTaskSelection={onToggleTaskSelection}
-                onStartInlineEditing={onStartInlineEditing}
-                onCancelInlineEditing={onCancelInlineEditing}
+                onToggleExpanded={handleToggleExpanded}
                 onInlineTaskSave={onInlineTaskSave}
-                onStartCreatingSubtask={onStartCreatingSubtask}
-                onCancelCreatingSubtask={onCancelCreatingSubtask}
                 onHandleSubtaskCreate={onHandleSubtaskCreate}
-                onStartEditingTitle={onStartEditingTitle}
-                onSaveEditingTitle={onSaveEditingTitle}
-                onCancelEditingTitle={onCancelEditingTitle}
-                onHandleTitleKeyDown={onHandleTitleKeyDown}
-                onHandleTitleChange={onHandleTitleChange}
-                onToggleContextMenu={onToggleContextMenu}
-                onHandleHistoryToggle={onHandleHistoryToggle}
-                onHandleTaskHoverEnter={onHandleTaskHoverEnter}
-                onHandleTaskHoverLeave={onHandleTaskHoverLeave}
-                onToggleTaskClick={onToggleTaskClick}
                 onHandleTaskToggleWithAnimation={onHandleTaskToggleWithAnimation}
               />
             ))}

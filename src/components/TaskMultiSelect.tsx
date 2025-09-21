@@ -1,15 +1,12 @@
 import React from 'react';
 import { X, Edit, Trash2 } from 'lucide-react';
 import { Task } from '../types';
+import { useTaskStore } from '../stores/useTaskStore';
 
 interface TaskMultiSelectProps {
-  isMultiSelectMode: boolean;
-  selectedTasks: Set<string>;
   tasks: Task[];
-  onClearSelection: () => void;
   onBulkEdit: () => void;
   onBulkDelete: () => void;
-  onExitMultiSelect: () => void;
 }
 
 /**
@@ -17,14 +14,22 @@ interface TaskMultiSelectProps {
  * Extraído de TaskList.tsx para mejorar la modularidad
  */
 export const TaskMultiSelect: React.FC<TaskMultiSelectProps> = ({
-  isMultiSelectMode,
-  selectedTasks,
   tasks,
-  onClearSelection,
   onBulkEdit,
-  onBulkDelete,
-  onExitMultiSelect
+  onBulkDelete
 }) => {
+  // Obtener estado y acciones del store
+  const { 
+    isMultiSelectMode, 
+    ui: { selectedTasks },
+    clearSelectedTasks, 
+    setIsMultiSelectMode 
+  } = useTaskStore();
+  
+  const handleExitMultiSelect = () => {
+    clearSelectedTasks();
+    setIsMultiSelectMode(false);
+  };
   if (!isMultiSelectMode) return null;
 
   const selectedCount = selectedTasks.size;
@@ -40,7 +45,7 @@ export const TaskMultiSelect: React.FC<TaskMultiSelectProps> = ({
           
           {selectedCount > 0 && (
             <button
-              onClick={onClearSelection}
+              onClick={clearSelectedTasks}
               className="text-xs text-gray-500 hover:text-gray-700 underline"
             >
               Limpiar selección
@@ -49,7 +54,7 @@ export const TaskMultiSelect: React.FC<TaskMultiSelectProps> = ({
         </div>
         
         <button
-          onClick={onExitMultiSelect}
+          onClick={handleExitMultiSelect}
           className="p-1 text-gray-400 hover:text-gray-600 transition-colors rounded hover:bg-gray-100"
           title="Salir del modo selección múltiple"
         >

@@ -268,6 +268,7 @@ export async function PUT(
     }
     
     // ACTUALIZACIÓN: Ejecutar la actualización de la tarea en la base de datos
+    console.log(`🔥 API: Updating task ${id} with data:`, updateData);
     const updatedTask = await prisma.task.update({
       where: { id },
       data: updateData,
@@ -286,6 +287,7 @@ export async function PUT(
         group: true
       }
     });
+    console.log(`✅ API: Task ${id} updated successfully. Completed: ${updatedTask.completed}`);
     
     // LÓGICA ESPECIAL PARA COMPLETAR TAREAS: Actualizar fecha final automáticamente
     let completionTimeMessage = '';

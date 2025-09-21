@@ -487,6 +487,7 @@ const InlineTaskEditForm: React.FC<InlineTaskEditFormProps> = ({
             className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
               errors.title ? 'border-red-300' : 'border-gray-300'  // Borde rojo si hay error
             }`}
+            style={{ direction: 'ltr', textAlign: 'left' }}  // Forzar dirección de texto izquierda a derecha
             placeholder="Enter task title..."
             disabled={isLoading}  // Deshabilitado durante la carga
             autoFocus             // Foco automático al abrir el formulario
@@ -513,6 +514,7 @@ const InlineTaskEditForm: React.FC<InlineTaskEditFormProps> = ({
             className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
               errors.description ? 'border-red-300' : 'border-gray-300' // Borde rojo si hay error
             }`}
+            style={{ direction: 'ltr', textAlign: 'left' }}  // Forzar dirección de texto izquierda a derecha
             placeholder="Enter task description..."
             disabled={isLoading}  // Deshabilitado durante la carga
           />

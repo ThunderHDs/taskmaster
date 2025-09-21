@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Save, X, ChevronDown, ChevronRight, AlertCircle, Check, Users, Edit3 } from 'lucide-react';
+import { useTaskStore } from '../stores/useTaskStore';
 
 // Interfaces
 interface Tag {
@@ -50,7 +51,6 @@ interface FieldAnalysis {
 
 interface BulkEditModalProps {
   isOpen: boolean;
-  selectedTaskIds: string[];
   allTasks: Task[];
   availableTags: Tag[];
   availableGroups: TaskGroup[];
@@ -60,15 +60,26 @@ interface BulkEditModalProps {
 
 const BulkEditModal: React.FC<BulkEditModalProps> = ({
   isOpen,
-  selectedTaskIds,
   allTasks,
   availableTags,
   availableGroups,
   onClose,
   onSave
 }) => {
-  // Filtrar las tareas seleccionadas
-  const tasks = allTasks.filter(task => selectedTaskIds.includes(task.id));
+  // Obtener tareas seleccionadas del store
+  const { ui: { selectedTasks } } = useTaskStore();
+  
+  // Memoizar selectedTaskIds para evitar recreación constante
+  const selectedTaskIds = useMemo(() => 
+    Array.from(selectedTasks || new Set()),
+    [selectedTasks]
+  );
+  
+  // Filtrar las tareas seleccionadas (memoizado para evitar recreación)
+  const tasks = useMemo(() => 
+    allTasks.filter(task => selectedTaskIds.includes(task.id)),
+    [allTasks, selectedTaskIds]
+  );
   // Estados principales
   const [step, setStep] = useState<'analysis' | 'editing' | 'confirmation'>('analysis');
   const [fieldAnalysis, setFieldAnalysis] = useState<FieldAnalysis[]>([]);
@@ -78,6 +89,63 @@ const BulkEditModal: React.FC<BulkEditModalProps> = ({
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
 
+  // Función para analizar campos de las tareas
+  const analyzeTaskFields = useCallback(() => {
+    const fields = [
+      { key: 'title', label: 'Título' },
+      { key: 'description', label: 'Descripción' },
+      { key: 'priority', label: 'Prioridad' },
+      { key: 'startDate', label: 'Fecha de inicio' },
+      { key: 'dueDate', label: 'Fecha de vencimiento' },
+      { key: 'group', label: 'Grupo' },
+      { key: 'tags', label: 'Etiquetas' },
+      { key: 'completed', label: 'Estado' }
+    ];
+
+    const analysis: FieldAnalysis[] = fields.map(({ key, label }) => {
+      const values = tasks.map(task => {
+        switch (key) {
+          case 'group':
+            return task.group;
+          case 'tags':
+            return task.tags;
+          default:
+            return (task as any)[key];
+        }
+      });
+
+      const firstValue = values[0];
+      const hasCommonValue = values.every(value => {
+        if (key === 'tags') {
+          return JSON.stringify(value?.map((t: Tag) => t.id).sort()) === JSON.stringify(firstValue?.map((t: Tag) => t.id).sort());
+        } else if (key === 'group') {
+          return value?.id === firstValue?.id;
+        }
+        return value === firstValue;
+      });
+
+      const differentValues = hasCommonValue ? [] : tasks.map((task, index) => ({
+        taskId: task.id,
+        value: values[index],
+        taskTitle: task.title
+      }));
+
+      return {
+        field: key,
+        label,
+        hasCommonValue,
+        commonValue: hasCommonValue ? firstValue : undefined,
+        differentValues,
+        editMode: 'none' as 'common' | 'individual' | 'none'
+      };
+    });
+
+    console.log('Field analysis completed:', analysis);
+    console.log('Setting fieldAnalysis state with:', analysis.length, 'items');
+    setFieldAnalysis(analysis);
+    console.log('setFieldAnalysis called');
+  }, [tasks]);
+
   // Analizar campos cuando se abra el modal
   useEffect(() => {
     if (isOpen && tasks && tasks.length > 0) {
@@ -85,7 +153,7 @@ const BulkEditModal: React.FC<BulkEditModalProps> = ({
       initializeUpdates();
       setStep('analysis');
     }
-  }, [isOpen, selectedTaskIds, allTasks]);
+  }, [isOpen, tasks]);
 
   // Funciones de formateo para mostrar datos
   const formatValue = (field: string, value: any): string => {
@@ -288,62 +356,7 @@ const BulkEditModal: React.FC<BulkEditModalProps> = ({
     }
   };
 
-  const analyzeTaskFields = () => {
-    console.log('analyzeTaskFields called with tasks:', tasks);
-    const fields = [
-      { key: 'title', label: 'Título' },
-      { key: 'description', label: 'Descripción' },
-      { key: 'priority', label: 'Prioridad' },
-      { key: 'startDate', label: 'Fecha de inicio' },
-      { key: 'dueDate', label: 'Fecha de vencimiento' },
-      { key: 'group', label: 'Grupo' },
-      { key: 'tags', label: 'Etiquetas' },
-      { key: 'completed', label: 'Estado' }
-    ];
 
-    const analysis: FieldAnalysis[] = fields.map(({ key, label }) => {
-      const values = tasks.map(task => {
-        switch (key) {
-          case 'group':
-            return task.group;
-          case 'tags':
-            return task.tags;
-          default:
-            return (task as any)[key];
-        }
-      });
-
-      const firstValue = values[0];
-      const hasCommonValue = values.every(value => {
-        if (key === 'tags') {
-          return JSON.stringify(value?.map((t: Tag) => t.id).sort()) === JSON.stringify(firstValue?.map((t: Tag) => t.id).sort());
-        } else if (key === 'group') {
-          return value?.id === firstValue?.id;
-        }
-        return value === firstValue;
-      });
-
-      const differentValues = hasCommonValue ? [] : tasks.map((task, index) => ({
-        taskId: task.id,
-        value: values[index],
-        taskTitle: task.title
-      }));
-
-      return {
-        field: key,
-        label,
-        hasCommonValue,
-        commonValue: hasCommonValue ? firstValue : undefined,
-        differentValues,
-        editMode: 'none' as 'common' | 'individual' | 'none'
-      };
-    });
-
-    console.log('Field analysis completed:', analysis);
-    console.log('Setting fieldAnalysis state with:', analysis.length, 'items');
-    setFieldAnalysis(analysis);
-    console.log('setFieldAnalysis called');
-  };
 
   const initializeUpdates = () => {
     const individual: Record<string, Partial<BulkUpdateData>> = {};

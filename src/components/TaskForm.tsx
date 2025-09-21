@@ -57,6 +57,7 @@ const TaskForm: React.FC<TaskFormProps> = ({
   availableGroups,
   isLoading = false
 }) => {
+  console.log('🔥 TaskForm - Received props:', { isOpen, task: task ? { id: task.id, title: task.title } : null });
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -150,7 +151,10 @@ const TaskForm: React.FC<TaskFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('🔥 TaskForm - handleSubmit called', { task, formData });
+    
     if (!validateForm()) {
+      console.log('🔥 TaskForm - Validation failed');
       return;
     }
 
@@ -175,6 +179,7 @@ const TaskForm: React.FC<TaskFormProps> = ({
       submitData.id = task.id;
     }
 
+    console.log('🔥 TaskForm - Calling onSubmit with:', submitData);
     onSubmit(submitData);
   };
 

@@ -34,12 +34,12 @@ interface InlineSubtaskFormProps {
   parentId: string;                                                              // ID de la tarea padre a la que pertenecerá la subtarea
   parentTask: Task;                                                              // Información completa de la tarea padre
   availableTags: Tag[];                                                          // Lista de etiquetas disponibles para asignar
-  onSave: (subtaskData: {                                                        // Callback para guardar la nueva subtarea
+  onSave: (parentId: string, subtaskData: {                                     // Callback para guardar la nueva subtarea
     title: string;                                                               // Título de la subtarea (requerido)
-    description?: string;                                                        // Descripción opcional de la subtarea
+    description?: string | null;                                                 // Descripción opcional de la subtarea
     priority: Priority;                                                          // Nivel de prioridad de la subtarea
-    startDate?: string;                                                          // Fecha de inicio opcional (ISO string)
-    dueDate?: string;                                                            // Fecha de vencimiento opcional (ISO string)
+    startDate?: string | null;                                                   // Fecha de inicio opcional (ISO string)
+    dueDate?: string | null;                                                     // Fecha de vencimiento opcional (ISO string)
     tagIds: string[];                                                            // IDs de las etiquetas asignadas
     parentId: string;                                                            // ID de la tarea padre
   }) => Promise<void>;
@@ -139,7 +139,7 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
       }
       
       // Luego crear la subtarea
-      await onSave(pendingSubtaskData);
+      await onSave(parentId, pendingSubtaskData);
       
       // Resetear formulario (mantener fechas para facilitar creación de múltiples subtareas)
       setFormData(prev => ({
@@ -369,11 +369,11 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
     // Preparar datos para envío
     const submitData = {
       title: formData.title.trim(),                                    // Título limpio (sin espacios extra)
-      description: formData.description.trim() || undefined,           // Descripción opcional
+      description: formData.description.trim() || null,               // Descripción opcional
       priority: formData.priority,                                     // Prioridad seleccionada
-      startDate: formatDateToISO(startDate) || undefined,              // Fecha de inicio en formato ISO
-      dueDate: formatDateToISO(formData.dueDate) || undefined,         // Fecha de vencimiento en formato ISO
-      tagIds: formData.tagIds,                                         // IDs de etiquetas seleccionadas
+      startDate: formatDateToISO(startDate) || null,                  // Fecha de inicio en formato ISO
+      dueDate: formatDateToISO(formData.dueDate) || null,             // Fecha de vencimiento en formato ISO
+      tagIds: formData.tagIds || [],                                   // IDs de etiquetas seleccionadas
       parentId                                                         // ID de la tarea padre
     };
 
@@ -396,19 +396,10 @@ const InlineSubtaskForm: React.FC<InlineSubtaskFormProps> = ({
 
     // Proceder con envío normal (sin conflictos detectados)
     try {
-      await onSave(submitData);
+      await onSave(parentId, submitData);
       
-      console.log('🔥 InlineSubtaskForm - NOT calling resetForm - preserving dates');
-      // No resetear formulario completamente - solo limpiar título y descripción pero preservar fechas
-      // Esto mejora la experiencia del usuario al crear múltiples subtareas con fechas similares
-      setFormData(prev => ({
-        ...prev,
-        title: '',                    // Limpiar título para nueva subtarea
-        description: '',              // Limpiar descripción
-        priority: 'MEDIUM',           // Resetear prioridad a valor por defecto
-        tagIds: []                    // Limpiar etiquetas seleccionadas
-        // Mantener startDate y dueDate sin cambios para facilitar creación de múltiples subtareas
-      }));
+      // Cerrar el formulario después de crear la subtarea exitosamente
+      onCancel();
     } catch (error) {
       console.error('Error creating subtask:', error);
     }

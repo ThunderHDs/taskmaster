@@ -248,20 +248,13 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
    * @param e - Evento del formulario
    */
   const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault(); // Prevenir el comportamiento por defecto del formulario
-    
-    console.log('🔥 InlineTaskForm - handleSubmit called');
-    console.log('🔥 InlineTaskForm - formData before validation:', {
-      startDate: formData.startDate,
-      dueDate: formData.dueDate,
-      title: formData.title
-    });
+    e.preventDefault();
     
     // Validar formulario antes del envío
     const validationErrors = validateForm();
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
-      return; // Detener envío si hay errores
+      return;
     }
     
     // Limpiar errores si la validación es exitosa
@@ -270,10 +263,8 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
     // Lógica de fechas: si no hay startDate pero sí hay dueDate, asignar startDate como hoy
     let startDate = formData.startDate;
     if (!startDate && formData.dueDate) {
-      // Crear fecha actual usando componentes individuales para evitar problemas de zona horaria
       const now = new Date();
       startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      console.log('🔥 InlineTaskForm - auto-assigned startDate:', startDate);
     }
     
     // Preparar datos para envío con formato correcto
@@ -291,13 +282,9 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
     if (hasDataCopied && shouldCopySubtasks && copiedSubtasks.length > 0) {
       submitData.copiedSubtasks = copiedSubtasks;
     }
-
-    console.log('🔥 InlineTaskForm - submitData being sent:', submitData);
     
     // Enviar datos al componente padre
     onSubmit(submitData);
-    
-    console.log('🔥 InlineTaskForm - Calling resetForm - cleaning all fields after successful creation');
     // Reseteo completo: limpiar todos los campos después de crear la tarea exitosamente
     // Esto evita que los datos de la tarea anterior permanezcan en el formulario
     resetForm();
@@ -412,12 +399,6 @@ const InlineTaskForm: React.FC<InlineTaskFormProps> = ({
     
     // Resetear el estado del checkbox a true (por defecto)
     setShouldCopySubtasks(true);
-    
-    console.log('🔥 DEBUG - After setting states:', {
-      hasDataCopied: true,
-      copiedSubtasksCount: subtasksToStore.length,
-      shouldCopySubtasks: true
-    });
     
     setShowTaskSelector(false);
   };

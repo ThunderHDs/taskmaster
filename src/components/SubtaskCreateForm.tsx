@@ -1,27 +1,34 @@
 import React, { useState } from 'react';
-import { AlertCircle, Tag as TagIcon, Copy, Plus, X } from 'lucide-react';
+import { AlertCircle, Tag as TagIcon, Copy, Plus, X, Trash2 } from 'lucide-react';
 import { Task, Tag, TaskGroup, Priority } from '../types';
 import { DateRangePicker, formatDateToISO } from './DateRangePicker';
-import DateConflictModal from './DateConflictModal';
-import { validateDateConflict, createParentUpdateData, type SubtaskData } from '../utils/dateConflictUtils';
 import TaskSelector from './TaskSelector';
 
 interface SubtaskCreateFormProps {
   parentTask: Task;
   availableTags: Tag[];
   availableGroups: TaskGroup[];
-  onSave: (subtaskData: {
+  onSave: (parentId: string, subtaskData: {
     title: string;
-    description?: string;
+    description?: string | null;
     priority: Priority;
-    startDate?: string;
-    dueDate?: string;
+    startDate?: string | null;
+    dueDate?: string | null;
     tagIds: string[];
     parentId: string;
   }) => Promise<void>;
   onCancel: () => void;
   isLoading?: boolean;
   onParentTaskUpdate?: (parentId: string, parentData: Partial<Task>) => Promise<void>;
+}
+
+interface SubtaskFormData {
+  title: string;
+  description: string;
+  priority: Priority;
+  startDate: Date | null;
+  dueDate: Date | null;
+  tagIds: string[];
 }
 
 const priorityOptions = [
@@ -40,198 +47,138 @@ const SubtaskCreateForm: React.FC<SubtaskCreateFormProps> = ({
   isLoading = false,
   onParentTaskUpdate
 }) => {
-  const [formData, setFormData] = useState({
+  const [subtasks, setSubtasks] = useState<SubtaskFormData[]>([{
     title: '',
     description: '',
-    priority: 'MEDIUM' as Priority,
-    startDate: null as Date | null,
-    dueDate: null as Date | null,
-    tagIds: [] as string[]
-  });
-
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [showConflictModal, setShowConflictModal] = useState(false);
-  const [conflictDetails, setConflictDetails] = useState<any>(null);
-  const [pendingSubtaskData, setPendingSubtaskData] = useState<any>(null);
-  const [isProcessingConflict, setIsProcessingConflict] = useState(false);
+    priority: 'MEDIUM',
+    startDate: null,
+    dueDate: null,
+    tagIds: []
+  }]);
+  const [errors, setErrors] = useState<Record<string, any>>({});
   const [showTaskSelector, setShowTaskSelector] = useState(false);
 
-  const adaptParentTask = (task: Task): SubtaskData => ({
-    id: task.id,
-    title: task.title,
-    startDate: task.startDate,
-    dueDate: task.dueDate,
-    priority: task.priority,
-    tags: task.tags || [],
-    parentId: task.parentId
-  });
+  const addSubtask = () => {
+    setSubtasks(prev => [...prev, {
+      title: '',
+      description: '',
+      priority: 'MEDIUM',
+      startDate: null,
+      dueDate: null,
+      tagIds: []
+    }]);
+  };
 
-  const handleConfirmKeepSubtask = async () => {
-    if (!pendingSubtaskData || !conflictDetails) return;
-    
-    setIsProcessingConflict(true);
-    
-    try {
-      if ((conflictDetails.suggestedParentStartDate || conflictDetails.suggestedParentEndDate) && onParentTaskUpdate) {
-        const parentUpdateData = createParentUpdateData(
-          adaptParentTask(parentTask),
-          conflictDetails.suggestedParentStartDate,
-          conflictDetails.suggestedParentEndDate
-        );
-        
-        await onParentTaskUpdate(parentTask.id, {
-          startDate: parentUpdateData.startDate || undefined,
-          dueDate: parentUpdateData.dueDate || undefined
-        });
-      }
-      
-      await onSave(pendingSubtaskData);
-      
-      setFormData(prev => ({
-        ...prev,
-        title: '',
-        description: '',
-        priority: 'MEDIUM',
-        tagIds: []
-      }));
-      
-      setErrors({});
-    } catch (error) {
-      console.error('Error al crear subtarea:', error);
-      setErrors({ submit: 'Error al crear la subtarea' });
-    } finally {
-      setIsProcessingConflict(false);
-      setShowConflictModal(false);
-      setConflictDetails(null);
-      setPendingSubtaskData(null);
+  const removeSubtask = (index: number) => {
+    if (subtasks.length > 1) {
+      setSubtasks(prev => prev.filter((_, i) => i !== index));
+      // Limpiar errores del índice eliminado
+      setErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors[`subtask_${index}`];
+        return newErrors;
+      });
     }
   };
 
-  const handleConfirmAdjustSubtask = async () => {
-    if (!pendingSubtaskData || !conflictDetails) return;
+  const updateSubtask = (index: number, field: keyof SubtaskFormData, value: any) => {
+    setSubtasks(prev => prev.map((subtask, i) => 
+      i === index ? { ...subtask, [field]: value } : subtask
+    ));
     
-    setIsProcessingConflict(true);
-    
-    try {
-      const adjustedData = {
-        ...pendingSubtaskData,
-        startDate: conflictDetails.suggestedSubtaskStartDate || pendingSubtaskData.startDate,
-        dueDate: conflictDetails.suggestedSubtaskEndDate || pendingSubtaskData.dueDate
-      };
-      
-      await onSave(adjustedData);
-      
-      setFormData(prev => ({
-        ...prev,
-        title: '',
-        description: '',
-        priority: 'MEDIUM',
-        tagIds: []
-      }));
-      
-      setErrors({});
-    } catch (error) {
-      console.error('Error al crear subtarea:', error);
-      setErrors({ submit: 'Error al crear la subtarea' });
-    } finally {
-      setIsProcessingConflict(false);
-      setShowConflictModal(false);
-      setConflictDetails(null);
-      setPendingSubtaskData(null);
+    // Limpiar error específico
+    if (errors[`subtask_${index}_${field}`]) {
+      setErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors[`subtask_${index}_${field}`];
+        return newErrors;
+      });
     }
   };
 
-  const validateForm = () => {
+  const handleTagToggle = (subtaskIndex: number, tagId: string) => {
+    updateSubtask(subtaskIndex, 'tagIds', 
+      subtasks[subtaskIndex].tagIds.includes(tagId)
+        ? subtasks[subtaskIndex].tagIds.filter(id => id !== tagId)
+        : [...subtasks[subtaskIndex].tagIds, tagId]
+    );
+  };
+
+  const validateSubtasks = () => {
     const newErrors: Record<string, string> = {};
-    
-    if (!formData.title.trim()) {
-      newErrors.title = 'El título es requerido';
-    }
-    
-    if (formData.startDate && formData.dueDate && formData.startDate > formData.dueDate) {
-      newErrors.dates = 'La fecha de inicio debe ser anterior a la fecha de vencimiento';
-    }
-    
+    let hasErrors = false;
+
+    subtasks.forEach((subtask, index) => {
+      if (!subtask.title.trim()) {
+        newErrors[`subtask_${index}_title`] = 'El título es requerido';
+        hasErrors = true;
+      }
+
+      if (subtask.startDate && subtask.dueDate && subtask.startDate > subtask.dueDate) {
+        newErrors[`subtask_${index}_dates`] = 'La fecha de inicio debe ser anterior a la fecha de fin';
+        hasErrors = true;
+      }
+    });
+
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return !hasErrors;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!validateForm()) return;
-    
-    const subtaskData = {
-      title: formData.title.trim(),
-      description: formData.description.trim() || undefined,
-      priority: formData.priority,
-      startDate: formData.startDate ? formatDateToISO(formData.startDate) : undefined,
-      dueDate: formData.dueDate ? formatDateToISO(formData.dueDate) : undefined,
-      tagIds: formData.tagIds,
-      parentId: parentTask.id
-    };
-    
-    const adaptedSubtask: SubtaskData = {
-      id: '',
-      title: subtaskData.title,
-      startDate: subtaskData.startDate,
-      dueDate: subtaskData.dueDate,
-      priority: subtaskData.priority,
-      tags: formData.tagIds.map(tagId => {
-        const tag = availableTags.find(t => t.id === tagId);
-        return tag ? { tag } : null;
-      }).filter(Boolean) as { tag: Tag }[],
-      parentId: parentTask.id
-    };
-    
-    const conflict = validateDateConflict(adaptedSubtask, adaptParentTask(parentTask));
-    
-    if (conflict.hasConflict) {
-      setConflictDetails(conflict);
-      setPendingSubtaskData(subtaskData);
-      setShowConflictModal(true);
+    if (!validateSubtasks()) {
       return;
     }
-    
+
     try {
-      await onSave(subtaskData);
-      
-      setFormData({
+      // ✅ CREAR SUBTAREAS SECUENCIALMENTE para evitar problemas de estado
+      // Preparar datos de todas las subtareas
+      const subtasksData = subtasks.map(subtask => ({
+        title: subtask.title.trim(),
+        description: subtask.description.trim() || null,
+        priority: subtask.priority,
+        startDate: subtask.startDate ? formatDateToISO(subtask.startDate) : null,
+        dueDate: subtask.dueDate ? formatDateToISO(subtask.dueDate) : null,
+        tagIds: subtask.tagIds,
+        parentId: parentTask.id
+      }));
+
+      // Crear subtareas una por una para evitar conflictos de estado
+      for (const subtaskData of subtasksData) {
+        await onSave(parentTask.id, subtaskData);
+        // Pequeña pausa para permitir que el estado se actualice
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      // Resetear formulario
+      setSubtasks([{
         title: '',
         description: '',
         priority: 'MEDIUM',
         startDate: null,
         dueDate: null,
         tagIds: []
-      });
-      
+      }]);
       setErrors({});
+      
     } catch (error) {
-      console.error('Error al crear subtarea:', error);
-      setErrors({ submit: 'Error al crear la subtarea' });
+      console.error('Error al crear subtareas:', error);
+      setErrors({ submit: 'Error al crear las subtareas' });
     }
   };
 
   const handleCopyFromTask = (taskData: any) => {
-    setFormData(prev => ({
-      ...prev,
-      title: taskData.title,
-      description: taskData.description || '',
-      priority: taskData.priority,
-      startDate: taskData.startDate ? new Date(taskData.startDate) : null,
-      dueDate: taskData.dueDate ? new Date(taskData.dueDate) : null,
-      tagIds: taskData.tags?.map((t: any) => t.tag?.id || t.id).filter(Boolean) || []
-    }));
+    if (subtasks.length === 1 && !subtasks[0].title) {
+      // Si solo hay una subtarea vacía, copiar los datos a ella
+      updateSubtask(0, 'title', taskData.title);
+      updateSubtask(0, 'description', taskData.description || '');
+      updateSubtask(0, 'priority', taskData.priority);
+      updateSubtask(0, 'startDate', taskData.startDate ? new Date(taskData.startDate) : null);
+      updateSubtask(0, 'dueDate', taskData.dueDate ? new Date(taskData.dueDate) : null);
+      updateSubtask(0, 'tagIds', taskData.tags?.map((t: any) => t.tag?.id || t.id).filter(Boolean) || []);
+    }
     setShowTaskSelector(false);
-  };
-
-  const handleTagToggle = (tagId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      tagIds: prev.tagIds.includes(tagId)
-        ? prev.tagIds.filter(id => id !== tagId)
-        : [...prev.tagIds, tagId]
-    }));
   };
 
   return (
@@ -240,7 +187,7 @@ const SubtaskCreateForm: React.FC<SubtaskCreateFormProps> = ({
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-medium text-gray-900 flex items-center gap-2">
             <Plus className="w-4 h-4" />
-            Nueva Subtarea
+            Nueva{subtasks.length > 1 ? 's' : ''} Subtarea{subtasks.length > 1 ? 's' : ''} ({subtasks.length})
           </h3>
           <div className="flex items-center gap-2">
             <button
@@ -264,106 +211,141 @@ const SubtaskCreateForm: React.FC<SubtaskCreateFormProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Título */}
-          <div>
-            <input
-              type="text"
-              placeholder="Título de la subtarea *"
-              value={formData.title}
-              onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-              className={`w-full px-3 py-2 border rounded-md text-sm ${
-                errors.title ? 'border-red-300' : 'border-gray-300'
-              } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-              disabled={isLoading}
-              autoFocus
-            />
-            {errors.title && (
-              <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" />
-                {errors.title}
-              </p>
-            )}
-          </div>
-
-          {/* Descripción */}
-          <div>
-            <textarea
-              placeholder="Descripción (opcional)"
-              value={formData.description}
-              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows={2}
-              disabled={isLoading}
-            />
-          </div>
-
-          {/* Prioridad */}
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Prioridad
-            </label>
-            <select
-              value={formData.priority}
-              onChange={(e) => setFormData(prev => ({ ...prev, priority: e.target.value as Priority }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isLoading}
-            >
-              {priorityOptions.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Fechas */}
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">
-              Fechas
-            </label>
-            <DateRangePicker
-              startDate={formData.startDate}
-              endDate={formData.dueDate}
-              onStartDateChange={(date) => setFormData(prev => ({ ...prev, startDate: date }))}
-              onEndDateChange={(date) => setFormData(prev => ({ ...prev, dueDate: date }))}
-              disabled={isLoading}
-            />
-            {errors.dates && (
-              <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" />
-                {errors.dates}
-              </p>
-            )}
-          </div>
-
-          {/* Etiquetas */}
-          {availableTags.length > 0 && (
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-2">
-                Etiquetas
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {availableTags.map(tag => (
+          {subtasks.map((subtask, index) => (
+            <div key={index} className="border border-gray-200 rounded-lg p-3 bg-white">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium text-gray-600">
+                  Subtarea {index + 1}
+                </span>
+                {subtasks.length > 1 && (
                   <button
-                    key={tag.id}
                     type="button"
-                    onClick={() => handleTagToggle(tag.id)}
-                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
-                      formData.tagIds.includes(tag.id)
-                        ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                        : 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200'
-                    }`}
+                    onClick={() => removeSubtask(index)}
+                    className="text-red-400 hover:text-red-600"
                     disabled={isLoading}
                   >
-                    <TagIcon className="w-3 h-3" />
-                    {tag.name}
+                    <Trash2 className="w-3 h-3" />
                   </button>
-                ))}
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {/* Título */}
+                <div>
+                  <input
+                    type="text"
+                    placeholder="Título de la subtarea *"
+                    value={subtask.title}
+                    onChange={(e) => updateSubtask(index, 'title', e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-md text-sm ${
+                      errors[`subtask_${index}_title`] ? 'border-red-300' : 'border-gray-300'
+                    } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    disabled={isLoading}
+                    autoFocus={index === 0}
+                  />
+                  {errors[`subtask_${index}_title`] && (
+                    <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {errors[`subtask_${index}_title`]}
+                    </p>
+                  )}
+                </div>
+
+                {/* Descripción */}
+                <div>
+                  <textarea
+                    placeholder="Descripción (opcional)"
+                    value={subtask.description}
+                    onChange={(e) => updateSubtask(index, 'description', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows={2}
+                    disabled={isLoading}
+                  />
+                </div>
+
+                {/* Prioridad */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Prioridad
+                  </label>
+                  <select
+                    value={subtask.priority}
+                    onChange={(e) => updateSubtask(index, 'priority', e.target.value as Priority)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={isLoading}
+                  >
+                    {priorityOptions.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Fechas */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    Fechas
+                  </label>
+                  <DateRangePicker
+                    startDate={subtask.startDate}
+                    endDate={subtask.dueDate}
+                    onDateChange={(startDate, endDate) => {
+                      updateSubtask(index, 'startDate', startDate);
+                      updateSubtask(index, 'dueDate', endDate);
+                    }}
+                    disabled={isLoading}
+                  />
+                  {errors[`subtask_${index}_dates`] && (
+                    <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {errors[`subtask_${index}_dates`]}
+                    </p>
+                  )}
+                </div>
+
+                {/* Etiquetas */}
+                {availableTags.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">
+                      Etiquetas
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {availableTags.map(tag => (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          onClick={() => handleTagToggle(index, tag.id)}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-colors ${
+                            subtask.tagIds.includes(tag.id)
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200'
+                          }`}
+                          disabled={isLoading}
+                        >
+                          <TagIcon className="w-3 h-3" />
+                          {tag.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          ))}
 
-          {/* Errores generales */}
+          {/* Botón para agregar más subtareas */}
+          <button
+            type="button"
+            onClick={addSubtask}
+            className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:border-gray-400 hover:text-gray-700 flex items-center justify-center gap-2"
+            disabled={isLoading}
+          >
+            <Plus className="w-4 h-4" />
+            Agregar otra subtarea
+          </button>
+
+          {/* Error general */}
           {errors.submit && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-md">
               <p className="text-sm text-red-600 flex items-center gap-2">
@@ -373,64 +355,33 @@ const SubtaskCreateForm: React.FC<SubtaskCreateFormProps> = ({
             </div>
           )}
 
-          {/* Botones */}
+          {/* Botones de acción */}
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={onCancel}
-              className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 disabled:opacity-50"
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
               disabled={isLoading}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={isLoading || !formData.title.trim()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+              disabled={isLoading}
             >
-              {isLoading ? 'Creando...' : 'Crear Subtarea'}
+              {isLoading ? 'Creando...' : `Crear ${subtasks.length} subtarea${subtasks.length > 1 ? 's' : ''}`}
             </button>
           </div>
         </form>
       </div>
 
-      {/* Modal de conflictos de fechas */}
-      {showConflictModal && conflictDetails && (
-        <DateConflictModal
-          isOpen={showConflictModal}
-          onClose={() => {
-            setShowConflictModal(false);
-            setConflictDetails(null);
-            setPendingSubtaskData(null);
-          }}
-          conflictType={conflictDetails.conflictType}
-          parentTask={{
-            title: parentTask.title,
-            startDate: parentTask.startDate,
-            dueDate: parentTask.dueDate
-          }}
-          subtask={{
-            title: formData.title,
-            startDate: formData.startDate ? formatDateToISO(formData.startDate) : undefined,
-            dueDate: formData.dueDate ? formatDateToISO(formData.dueDate) : undefined
-          }}
-          suggestedParentStartDate={conflictDetails.suggestedParentStartDate}
-          suggestedParentEndDate={conflictDetails.suggestedParentEndDate}
-          suggestedSubtaskStartDate={conflictDetails.suggestedSubtaskStartDate}
-          suggestedSubtaskEndDate={conflictDetails.suggestedSubtaskEndDate}
-          onConfirmKeepSubtask={handleConfirmKeepSubtask}
-          onConfirmAdjustSubtask={handleConfirmAdjustSubtask}
-          isProcessing={isProcessingConflict}
-        />
-      )}
-
-      {/* Selector de tareas para copiar */}
+      {/* Modal de selector de tareas */}
       {showTaskSelector && (
         <TaskSelector
-          isOpen={showTaskSelector}
-          onClose={() => setShowTaskSelector(false)}
+          tasks={[]} // Aquí deberías pasar las tareas disponibles
           onSelectTask={handleCopyFromTask}
-          excludeTaskId={parentTask.id}
+          onClose={() => setShowTaskSelector(false)}
         />
       )}
     </>
