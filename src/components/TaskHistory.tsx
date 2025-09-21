@@ -292,3 +292,4 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ taskId, isVisible, onClose })
 };
 
 export default TaskHistory;
+export { TaskHistory };

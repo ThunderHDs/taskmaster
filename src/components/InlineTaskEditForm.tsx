@@ -711,3 +711,4 @@ const InlineTaskEditForm: React.FC<InlineTaskEditFormProps> = ({
 };
 
 export default InlineTaskEditForm;
+export { InlineTaskEditForm };

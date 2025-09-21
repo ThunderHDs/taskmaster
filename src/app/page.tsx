@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Filter, Tag as TagIcon, Search, Settings, RefreshCw, Calendar as CalendarIcon, Clock, Users, CheckSquare, Edit } from 'lucide-react';
+import { isSameDay, isWithinInterval, startOfWeek, endOfWeek, isSameMonth } from 'date-fns';
 import Link from 'next/link';
 import TaskList from '@/components/TaskList';
 import TaskForm from '@/components/TaskForm';
@@ -15,6 +16,7 @@ import BulkEditModal from '@/components/BulkEditModal';
 import CalendarView from '@/components/CalendarView';
 import CalendarHeader from '@/components/CalendarHeader';
 import Calendar from '@/components/Calendar';
+import { TaskFilters } from '@/components/TaskFilters';
 import { useUndoRedo } from '@/hooks/useUndoRedo';
 import UndoToast from '@/components/UndoToast';
 
@@ -108,14 +110,60 @@ const HomePage: React.FC = () => {
   // Bulk edit modal states (global)
   const [showBulkEditModal, setShowBulkEditModal] = useState(false);
   const [bulkEditTasks, setBulkEditTasks] = useState<Task[]>([]);
+  const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
-  const [priorityFilter, setPriorityFilter] = useState('all');
-  const [completedFilter, setCompletedFilter] = useState('pending');
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
+  const [selectedPriorities, setSelectedPriorities] = useState<Set<string>>(new Set());
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [showOverdue, setShowOverdue] = useState(false);
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+
   const [showFilters, setShowFilters] = useState(false);
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+
+  // Handlers para TaskFilters
+  const handleTagFilterChange = (tagId: string) => {
+    const newSelectedTags = new Set(selectedTags);
+    if (newSelectedTags.has(tagId)) {
+      newSelectedTags.delete(tagId);
+    } else {
+      newSelectedTags.add(tagId);
+    }
+    setSelectedTags(newSelectedTags);
+  };
+
+  const handleGroupFilterChange = (groupId: string) => {
+    const newSelectedGroups = new Set(selectedGroups);
+    if (newSelectedGroups.has(groupId)) {
+      newSelectedGroups.delete(groupId);
+    } else {
+      newSelectedGroups.add(groupId);
+    }
+    setSelectedGroups(newSelectedGroups);
+  };
+
+  const handlePriorityFilterChange = (priority: string) => {
+    const newSelectedPriorities = new Set(selectedPriorities);
+    if (newSelectedPriorities.has(priority)) {
+      newSelectedPriorities.delete(priority);
+    } else {
+      newSelectedPriorities.add(priority);
+    }
+    setSelectedPriorities(newSelectedPriorities);
+  };
+
+  const clearAllFilters = () => {
+    setSelectedTags(new Set());
+    setSelectedGroups(new Set());
+    setSelectedPriorities(new Set());
+    setShowCompleted(false);
+    setShowOverdue(false);
+    setDateFilter('all');
+    setSearchQuery('');
+  };
 
   // Calendar states
   const [isCalendarMode, setIsCalendarMode] = useState(false);
@@ -315,23 +363,42 @@ const HomePage: React.FC = () => {
   };
 
   // Global bulk edit handlers
-  const handleGlobalBulkEdit = (selectedTasks: Task[]) => {
-    setBulkEditTasks(selectedTasks);
+  const handleGlobalBulkEdit = (selectedTasksArray: Task[]) => {
+    // Extraer los IDs de las tareas seleccionadas
+    const taskIds = selectedTasksArray.map(task => task.id);
+    setSelectedTasks(taskIds);
+    setBulkEditTasks(selectedTasksArray);
     setShowBulkEditModal(true);
   };
 
-  const handleBulkEditSave = async (updates: any) => {
+  const handleBulkEditSave = async (data: {
+    commonUpdates: any;
+    individualUpdates: { [taskId: string]: any };
+    subtaskUpdates: { [subtaskId: string]: any };
+  }) => {
     try {
-      const taskIds = bulkEditTasks.map(task => task.id);
-      await handleBulkEdit(taskIds, updates);
+      console.log('🔧 handleBulkEditSave - Datos recibidos:', data);
+      
+      // Preparar los datos en el formato esperado por la API
+      const updates = {
+        // Campos comunes (se aplican a todas las tareas si no hay override individual)
+        ...data.commonUpdates,
+        // Actualizaciones específicas por tarea
+        individualUpdates: data.individualUpdates || {},
+        // Actualizaciones de subtareas por ID de subtarea
+        subtaskUpdates: data.subtaskUpdates || {}
+      };
+      
+      console.log('🔧 handleBulkEditSave - Updates preparados:', updates);
+      
+      // Usar selectedTasks en lugar de bulkEditTasks
+      await handleBulkEdit(selectedTasks, updates);
+      
+      // Cerrar el modal y limpiar selección
       setShowBulkEditModal(false);
-      setBulkEditTasks([]);
-      // Limpiar selección si existe
-      if (clearSelectionFn) {
-        clearSelectionFn();
-      }
+      setSelectedTasks([]);
     } catch (error) {
-      console.error('Error in bulk edit:', error);
+      console.error('Error en edición masiva:', error);
       throw error;
     }
   };
@@ -1384,29 +1451,35 @@ const HomePage: React.FC = () => {
     }
 
     // Priority filter
-    if (priorityFilter !== 'all' && task.priority !== priorityFilter) {
+    if (selectedPriorities.size > 0 && !selectedPriorities.has(task.priority)) {
       return false;
     }
 
     // Completed filter
-    if (completedFilter === 'completed' && !task.completed) {
-      return false;
-    }
-    if (completedFilter === 'pending' && task.completed) {
+    if (!showCompleted && task.completed) {
       return false;
     }
 
+    // Overdue filter
+    if (showOverdue) {
+      const now = new Date();
+      const dueDate = task.dueDate ? new Date(task.dueDate) : null;
+      if (!dueDate || dueDate > now || task.completed) {
+        return false;
+      }
+    }
+
     // Tags filter
-    if (selectedTags.length > 0) {
+    if (selectedTags.size > 0) {
       const taskTagIds = task.tags.map(t => t.tag.id);
-      if (!selectedTags.some(tagId => taskTagIds.includes(tagId))) {
+      if (!taskTagIds.some(tagId => selectedTags.has(tagId))) {
         return false;
       }
     }
 
     // Groups filter
-    if (selectedGroups.length > 0) {
-      if (!task.groupId || !selectedGroups.includes(task.groupId)) {
+    if (selectedGroups.size > 0) {
+      if (!task.groupId || !selectedGroups.has(task.groupId)) {
         return false;
       }
     }
@@ -1507,16 +1580,7 @@ const HomePage: React.FC = () => {
                 <TagIcon className="w-4 h-4" />
               </button>
               
-              <button
-                onClick={() => {
-                  const event = new CustomEvent('toggleMultiSelect');
-                  window.dispatchEvent(event);
-                }}
-                className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-colors"
-                title="Selección múltiple"
-              >
-                <CheckSquare className="w-4 h-4" />
-              </button>
+
               
 
               <button
@@ -1533,39 +1597,21 @@ const HomePage: React.FC = () => {
                 <Filter className="w-4 h-4" />
               </button>
               
-              {/* Status Filter - Triple Switch */}
-              <div className="flex items-center bg-gray-100 rounded-lg p-1">
+              {/* Multi-select Mode Toggle */}
+              {!isCalendarMode && filteredTasks.length > 0 && (
                 <button
-                  onClick={() => setCompletedFilter('all')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    completedFilter === 'all'
-                      ? 'bg-white text-gray-900 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  onClick={() => setIsMultiSelectMode(!isMultiSelectMode)}
+                  className={`inline-flex items-center px-3 py-2 text-sm font-medium border rounded-md transition-colors ${
+                    isMultiSelectMode 
+                      ? 'text-blue-700 bg-blue-50 border-blue-300 hover:bg-blue-100' 
+                      : 'text-gray-700 bg-white border-gray-300 hover:bg-gray-50'
+                  } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
                 >
-                  All
+                  <Plus className="w-4 h-4" />
                 </button>
-                <button
-                  onClick={() => setCompletedFilter('pending')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    completedFilter === 'pending'
-                      ? 'bg-orange-100 text-orange-800 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Pending
-                </button>
-                <button
-                  onClick={() => setCompletedFilter('completed')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    completedFilter === 'completed'
-                      ? 'bg-green-100 text-green-800 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
-                  Done
-                </button>
-              </div>
+              )}
+              
+
               
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -1581,6 +1627,33 @@ const HomePage: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Filters Section - Conditional */}
+      {showFilters && (
+        <div className="bg-gray-50 border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <TaskFilters
+              tasks={tasks}
+              filteredTasks={filteredTasks}
+              availableTags={tags}
+              availableGroups={groups}
+              selectedTags={selectedTags}
+              selectedGroups={selectedGroups}
+              selectedPriorities={selectedPriorities}
+              showCompleted={showCompleted}
+              showOverdue={showOverdue}
+              dateFilter={dateFilter}
+              onTagFilterChange={handleTagFilterChange}
+              onGroupFilterChange={handleGroupFilterChange}
+              onPriorityFilterChange={handlePriorityFilterChange}
+              onShowCompletedChange={setShowCompleted}
+              onShowOverdueChange={setShowOverdue}
+              onDateFilterChange={setDateFilter}
+              onClearAllFilters={clearAllFilters}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1622,126 +1695,21 @@ const HomePage: React.FC = () => {
                 />
               </div>
 
-              {/* Filters */}
-              <div className={`mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4 ${showFilters ? 'block' : 'hidden'}`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium text-gray-900">Advanced Filters</h3>
+              {/* Clear Filters */}
+              {(searchQuery || selectedTags.size > 0 || selectedGroups.size > 0 || selectedPriorities.size > 0 || showOverdue || dateFilter !== 'all') && (
+                <div className="mt-4">
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-sm text-blue-600 hover:text-blue-800 py-2 px-4 border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
+                  >
+                    Clear All Filters
+                  </button>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Priority Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-2">
-                      Priority
-                    </label>
-                    <select
-                      value={priorityFilter}
-                      onChange={(e) => setPriorityFilter(e.target.value)}
-                      className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      <option value="all">All Priorities</option>
-                      <option value="URGENT">Urgent</option>
-                      <option value="HIGH">High</option>
-                      <option value="MEDIUM">Medium</option>
-                      <option value="LOW">Low</option>
-                    </select>
-                  </div>
-
-                  {/* Tags Filter */}
-                  {tags.length > 0 && (
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-2">
-                        Tags
-                      </label>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {tags.map(tag => (
-                          <label key={tag.id} className="flex items-center">
-                            <input
-                              type="checkbox"
-                              checked={selectedTags.includes(tag.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedTags([...selectedTags, tag.id]);
-                                } else {
-                                  setSelectedTags(selectedTags.filter(id => id !== tag.id));
-                                }
-                              }}
-                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
-                            />
-                            <div className="ml-2 flex items-center">
-                              <div
-                                className="w-3 h-3 rounded-full mr-2"
-                                style={{ backgroundColor: tag.color }}
-                              />
-                              <span className="text-sm text-gray-700">{tag.name}</span>
-                              <span className="ml-1 text-xs text-gray-500">({tag._count?.tasks || 0})</span>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Groups Filter */}
-                  {groups.length > 0 && (
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-2">
-                        Groups
-                      </label>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {groups.map(group => (
-                          <label key={group.id} className="flex items-center">
-                            <input
-                              type="checkbox"
-                              checked={selectedGroups.includes(group.id)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedGroups([...selectedGroups, group.id]);
-                                } else {
-                                  setSelectedGroups(selectedGroups.filter(id => id !== group.id));
-                                }
-                              }}
-                              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
-                            />
-                            <div className="ml-2 flex items-center">
-                              <div
-                                className="w-3 h-3 rounded-full mr-2"
-                                style={{ backgroundColor: group.color }}
-                              />
-                              <span className="text-sm text-gray-700">{group.name}</span>
-                              {group.description && (
-                                <span className="ml-1 text-xs text-gray-500">- {group.description}</span>
-                              )}
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Clear Filters */}
-                {(searchQuery || selectedTags.length > 0 || selectedGroups.length > 0 || priorityFilter !== 'all' || completedFilter !== 'pending') && (
-                  <div className="mt-4">
-                    <button
-                      onClick={() => {
-                        setSearchQuery('');
-                        setSelectedTags([]);
-                        setSelectedGroups([]);
-                        setPriorityFilter('all');
-                        setCompletedFilter('pending');
-                      }}
-                      className="text-sm text-blue-600 hover:text-blue-800 py-2 px-4 border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
-                    >
-                      Clear All Filters
-                    </button>
-                  </div>
-                )}
-              </div>
+              )}
 
               {/* Task List */}
               <div>
-                <TaskList
+              <TaskList
               key={`main-tasklist-${tasks.length}-${forceRerender}`}
               tasks={filteredTasks}
               onTaskToggle={handleTaskToggle}
@@ -1753,15 +1721,15 @@ const HomePage: React.FC = () => {
               availableGroups={groups}
               selectedTags={selectedTags}
               selectedGroups={selectedGroups}
-              priorityFilter={priorityFilter}
-              completedFilter={completedFilter}
               isLoading={loading}
               isGroupedView={isGroupedView}
               onTaskStateUpdate={handleTaskStateUpdate}
               onBulkDelete={handleBulkDelete}
-              onBulkEdit={handleBulkEdit}
+              onBulkEdit={handleGlobalBulkEdit}
               onGlobalBulkEdit={handleGlobalBulkEdit}
               onClearSelection={handleClearSelectionFn}
+              isMultiSelectMode={isMultiSelectMode}
+              setIsMultiSelectMode={setIsMultiSelectMode}
                 />
               </div>
 
@@ -1770,9 +1738,8 @@ const HomePage: React.FC = () => {
                 const tasksWithoutDate = tasks.filter(task => !task.dueDate && !task.startDate && !task.parentId);
                 // Aplicar filtros de completadas para determinar si mostrar la sección
                 const filteredTasksWithoutDate = tasksWithoutDate.filter(task => {
-                  if (completedFilter === 'completed') return task.completed;
-                  if (completedFilter === 'pending') return !task.completed;
-                  return true; // 'all'
+                  if (!showCompleted && task.completed) return false;
+                  return true;
                 });
                 return filteredTasksWithoutDate.length > 0 && (
                   <div className="mt-6">
@@ -1793,15 +1760,15 @@ const HomePage: React.FC = () => {
                         availableGroups={groups}
                         selectedTags={[]}
                         selectedGroups={[]}
-                        priorityFilter="all"
-                        completedFilter={completedFilter}
                         isLoading={loading}
                         isGroupedView={isGroupedView}
                         onTaskStateUpdate={handleTaskStateUpdate}
                         onBulkDelete={handleBulkDelete}
-                        onBulkEdit={handleBulkEdit}
+                        onBulkEdit={handleGlobalBulkEdit}
                         onGlobalBulkEdit={handleGlobalBulkEdit}
                         onClearSelection={handleClearSelectionFn}
+                        isMultiSelectMode={isMultiSelectMode}
+                        setIsMultiSelectMode={setIsMultiSelectMode}
                       />
                     </div>
                   </div>
@@ -1823,122 +1790,7 @@ const HomePage: React.FC = () => {
               />
             </div>
 
-            {/* Filters */}
-            <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 ${showFilters ? 'block' : 'hidden'}`}>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-medium text-gray-900">Advanced Filters</h3>
-              </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Priority Filter */}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">
-                    Priority
-                  </label>
-                  <select
-                    value={priorityFilter}
-                    onChange={(e) => setPriorityFilter(e.target.value)}
-                    className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="all">All Priorities</option>
-                    <option value="URGENT">Urgent</option>
-                    <option value="HIGH">High</option>
-                    <option value="MEDIUM">Medium</option>
-                    <option value="LOW">Low</option>
-                  </select>
-                </div>
-
-                {/* Tags Filter */}
-                {tags.length > 0 && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-2">
-                      Tags
-                    </label>
-                    <div className="space-y-2 max-h-32 overflow-y-auto">
-                      {tags.map(tag => (
-                        <label key={tag.id} className="flex items-center">
-                          <input
-                            type="checkbox"
-                            checked={selectedTags.includes(tag.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedTags([...selectedTags, tag.id]);
-                              } else {
-                                setSelectedTags(selectedTags.filter(id => id !== tag.id));
-                              }
-                            }}
-                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
-                          />
-                          <div className="ml-2 flex items-center">
-                            <div
-                              className="w-3 h-3 rounded-full mr-2"
-                              style={{ backgroundColor: tag.color }}
-                            />
-                            <span className="text-sm text-gray-700">{tag.name}</span>
-                            <span className="ml-1 text-xs text-gray-500">({tag._count?.tasks || 0})</span>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Groups Filter */}
-                {groups.length > 0 && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-2">
-                      Groups
-                    </label>
-                    <div className="space-y-2 max-h-32 overflow-y-auto">
-                      {groups.map(group => (
-                        <label key={group.id} className="flex items-center">
-                          <input
-                            type="checkbox"
-                            checked={selectedGroups.includes(group.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setSelectedGroups([...selectedGroups, group.id]);
-                              } else {
-                                setSelectedGroups(selectedGroups.filter(id => id !== group.id));
-                              }
-                            }}
-                            className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
-                          />
-                          <div className="ml-2 flex items-center">
-                            <div
-                              className="w-3 h-3 rounded-full mr-2"
-                              style={{ backgroundColor: group.color }}
-                            />
-                            <span className="text-sm text-gray-700">{group.name}</span>
-                            {group.description && (
-                              <span className="ml-1 text-xs text-gray-500">- {group.description}</span>
-                            )}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Clear Filters */}
-              {(searchQuery || selectedTags.length > 0 || selectedGroups.length > 0 || priorityFilter !== 'all' || completedFilter !== 'pending') && (
-                <div className="mt-4">
-                  <button
-                    onClick={() => {
-                      setSearchQuery('');
-                      setSelectedTags([]);
-                      setSelectedGroups([]);
-                      setPriorityFilter('all');
-                      setCompletedFilter('pending');
-                    }}
-                    className="text-sm text-blue-600 hover:text-blue-800 py-2 px-4 border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
-                  >
-                    Clear All Filters
-                  </button>
-                </div>
-              )}
-            </div>
 
             {/* Task List and Statistics */}
             <div className="flex gap-6">
@@ -1955,15 +1807,17 @@ const HomePage: React.FC = () => {
                   availableGroups={groups}
                   selectedTags={selectedTags}
                   selectedGroups={selectedGroups}
-                  priorityFilter={priorityFilter}
-                  completedFilter={completedFilter}
+                  selectedPriorities={selectedPriorities}
+                  showCompleted={showCompleted}
                   isLoading={loading}
                   isGroupedView={isGroupedView}
                   onTaskStateUpdate={handleTaskStateUpdate}
                   onBulkDelete={handleBulkDelete}
-                  onBulkEdit={handleBulkEdit}
+                  onBulkEdit={handleGlobalBulkEdit}
                   onGlobalBulkEdit={handleGlobalBulkEdit}
                   onClearSelection={handleClearSelectionFn}
+                  isMultiSelectMode={isMultiSelectMode}
+                  setIsMultiSelectMode={setIsMultiSelectMode}
                 />
               </div>
               
@@ -2072,9 +1926,10 @@ const HomePage: React.FC = () => {
         isOpen={showBulkEditModal}
         onClose={handleBulkEditClose}
         onSave={handleBulkEditSave}
-        selectedTasks={bulkEditTasks}
-        tags={tags}
-        groups={groups}
+        selectedTaskIds={selectedTasks}
+        allTasks={tasks}
+        availableTags={tags}
+        availableGroups={groups}
       />
 
       {/* Toast de notificación para deshacer */}

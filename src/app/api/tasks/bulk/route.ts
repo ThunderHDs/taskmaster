@@ -276,9 +276,13 @@ export async function PUT(request: NextRequest) {
     }
 
     // VALIDACIÓN: Verificar que se proporcionen actualizaciones
-    if (!updates || typeof updates !== 'object') {
+    const hasCommonUpdates = updates && typeof updates === 'object' && Object.keys(updates).filter(key => !['individualUpdates', 'subtaskUpdates'].includes(key)).length > 0;
+    const hasIndividualUpdates = updates?.individualUpdates && Object.keys(updates.individualUpdates).length > 0;
+    const hasSubtaskUpdates = updates?.subtaskUpdates && Object.keys(updates.subtaskUpdates).length > 0;
+    
+    if (!hasCommonUpdates && !hasIndividualUpdates && !hasSubtaskUpdates) {
       return NextResponse.json(
-        { error: 'Se requieren datos de actualización' },
+        { error: 'Se requieren datos de actualización. Debe seleccionar al menos un campo para actualizar.' },
         { status: 400 }
       );
     }
@@ -424,17 +428,64 @@ export async function PUT(request: NextRequest) {
           throw new Error(`La fecha de inicio no puede ser posterior a la fecha límite para la tarea ${taskId}`);
         }
 
-        // Actualizar la tarea
-        const updatedTask = await tx.task.update({
-          where: { id: taskId },
-          data: taskUpdateData,
-          include: {
-            tags: { include: { tag: true } },
-            subtasks: true,
-            parent: true,
-            group: true
+        // Aplicar actualizaciones individuales específicas
+        if (updates.individualUpdates && updates.individualUpdates[taskId]) {
+          const individualData = updates.individualUpdates[taskId];
+          
+          // Sobrescribir con datos individuales si están presentes
+          if (individualData.title !== undefined) {
+            taskUpdateData.title = individualData.title;
           }
-        });
+          if (individualData.description !== undefined) {
+            taskUpdateData.description = individualData.description;
+          }
+          if (individualData.priority !== undefined) {
+            taskUpdateData.priority = individualData.priority;
+          }
+          if (individualData.completed !== undefined) {
+            taskUpdateData.completed = individualData.completed;
+          }
+        }
+
+        // Actualizar la tarea solo si hay cambios
+        let updatedTask;
+        if (Object.keys(taskUpdateData).length > 0) {
+          updatedTask = await tx.task.update({
+            where: { id: taskId },
+            data: taskUpdateData,
+            include: {
+              tags: { include: { tag: true } },
+              subtasks: {
+                include: {
+                  tags: { include: { tag: true } },
+                  subtasks: true,
+                  parent: true,
+                  group: true
+                }
+              },
+              parent: true,
+              group: true
+            }
+          });
+        } else {
+          // Si no hay actualizaciones de campos principales, obtener la tarea actual
+          updatedTask = await tx.task.findUnique({
+            where: { id: taskId },
+            include: {
+              tags: { include: { tag: true } },
+              subtasks: {
+                include: {
+                  tags: { include: { tag: true } },
+                  subtasks: true,
+                  parent: true,
+                  group: true
+                }
+              },
+              parent: true,
+              group: true
+            }
+          });
+        }
 
         // Actualizar etiquetas (globales o individuales)
         let tagIdsToUpdate = updates.tagIds;
@@ -461,37 +512,47 @@ export async function PUT(request: NextRequest) {
 
         // Procesar actualizaciones de subtareas existentes
         if (updates.subtaskUpdates) {
-          for (const [key, subtaskUpdate] of Object.entries(updates.subtaskUpdates)) {
-            const [parentTaskId, subtaskId] = key.split('-');
+          for (const [subtaskId, subtaskUpdate] of Object.entries(updates.subtaskUpdates)) {
+            // Verificar que la subtarea pertenece a una de las tareas seleccionadas
+            const subtask = await tx.task.findFirst({
+              where: {
+                id: subtaskId,
+                OR: [
+                  { parentId: { in: taskIds } },
+                  { parent: { parentId: { in: taskIds } } } // Para subtareas anidadas
+                ]
+              }
+            });
             
-            // Solo procesar si la subtarea pertenece a la tarea actual
-            if (parentTaskId === taskId) {
+            if (subtask) {
               const subtaskUpdateData: any = {};
               
-              if (subtaskUpdate.title !== undefined) {
-                subtaskUpdateData.title = subtaskUpdate.title;
+              if ((subtaskUpdate as any).title !== undefined) {
+                subtaskUpdateData.title = (subtaskUpdate as any).title;
               }
-              if (subtaskUpdate.description !== undefined) {
-                subtaskUpdateData.description = subtaskUpdate.description;
+              if ((subtaskUpdate as any).description !== undefined) {
+                subtaskUpdateData.description = (subtaskUpdate as any).description;
               }
-              if (subtaskUpdate.priority !== undefined) {
-                subtaskUpdateData.priority = subtaskUpdate.priority;
+              if ((subtaskUpdate as any).priority !== undefined) {
+                subtaskUpdateData.priority = (subtaskUpdate as any).priority;
               }
-              if (subtaskUpdate.startDate !== undefined) {
-                subtaskUpdateData.startDate = subtaskUpdate.startDate ? new Date(subtaskUpdate.startDate) : null;
+              if ((subtaskUpdate as any).startDate !== undefined) {
+                subtaskUpdateData.startDate = (subtaskUpdate as any).startDate ? new Date((subtaskUpdate as any).startDate) : null;
               }
-              if (subtaskUpdate.dueDate !== undefined) {
-                subtaskUpdateData.dueDate = subtaskUpdate.dueDate ? new Date(subtaskUpdate.dueDate) : null;
+              if ((subtaskUpdate as any).dueDate !== undefined) {
+                subtaskUpdateData.dueDate = (subtaskUpdate as any).dueDate ? new Date((subtaskUpdate as any).dueDate) : null;
               }
-              if (subtaskUpdate.completed !== undefined) {
-                subtaskUpdateData.completed = subtaskUpdate.completed;
+              if ((subtaskUpdate as any).completed !== undefined) {
+                subtaskUpdateData.completed = (subtaskUpdate as any).completed;
               }
               
-              // Actualizar la subtarea
-              await tx.task.update({
-                where: { id: subtaskId },
-                data: subtaskUpdateData
-              });
+              // Actualizar la subtarea si hay cambios
+              if (Object.keys(subtaskUpdateData).length > 0) {
+                await tx.task.update({
+                  where: { id: subtaskId },
+                  data: subtaskUpdateData
+                });
+              }
             }
           }
         }
@@ -534,12 +595,17 @@ export async function PUT(request: NextRequest) {
           }
         }
 
-        updatedTasks.push(updatedTask);
+        if (updatedTask) {
+          updatedTasks.push(updatedTask);
+        }
 
         // Registrar actividad
         let activityDetails = 'Tarea actualizada mediante edición masiva';
         if (updates.individualUpdates && updates.individualUpdates[taskId]) {
           activityDetails += ' con datos individuales';
+        }
+        if (updates.subtaskUpdates && Object.keys(updates.subtaskUpdates).length > 0) {
+          activityDetails += ` - Subtareas modificadas: ${Object.keys(updates.subtaskUpdates).length}`;
         }
         if (updates.subtasks) {
           const commonCount = updates.subtasks.common?.length || 0;
