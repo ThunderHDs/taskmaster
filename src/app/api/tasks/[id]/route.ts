@@ -1,0 +1,602 @@
+// Importaciones necesarias para manejar requests HTTP en Next.js API Routes
+import { NextRequest, NextResponse } from 'next/server';
+// Cliente de Prisma para interactuar con la base de datos
+import { prisma } from '@/lib/prisma';
+// DESHABILITADO: Sistema de detección de conflictos - descomentar para reactivar
+// import { detectConflictsForTask, saveDetectedConflicts } from '@/lib/conflictDetection';
+
+/**
+ * GET /api/tasks/[id] - Obtener una tarea específica por su ID
+ * 
+ * Parámetros de ruta:
+ * - id: string - ID único de la tarea a obtener
+ * 
+ * Incluye todas las relaciones: etiquetas, subtareas, tarea padre, actividades y conflictos
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    // Extraer el ID de la tarea desde los parámetros de la ruta
+    const { id } = await params;
+    
+    // Buscar la tarea específica con todas sus relaciones
+    const task = await prisma.task.findUnique({
+      where: { id },
+      include: {
+        // Incluir etiquetas asociadas a la tarea
+        tags: {
+          include: {
+            tag: true  // Datos completos de cada etiqueta
+          }
+        },
+        // Incluir subtareas ordenadas por fecha de creación
+        subtasks: {
+          include: {
+            tags: {
+              include: {
+                tag: true  // Datos completos de etiquetas de subtareas
+              }
+            }
+          },
+          orderBy: {
+            createdAt: 'asc'  // Subtareas más antiguas primero
+          }
+        },
+        // Incluir información de la tarea padre (si existe)
+        parent: true,
+        // Incluir información del grupo al que pertenece la tarea
+        group: true,
+        // Incluir todas las actividades ordenadas por fecha
+        activities: {
+          orderBy: {
+            createdAt: 'desc'  // Actividades más recientes primero
+          }
+        },
+        // Incluir conflictos de fechas con otras tareas
+        conflicts: {
+          include: {
+            conflictingTask: true  // Datos de la tarea en conflicto
+          }
+        }
+      }
+    });
+    
+    // Verificar si la tarea existe
+    if (!task) {
+      return NextResponse.json(
+        { error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+    
+    // Retornar la tarea encontrada con todas sus relaciones
+    return NextResponse.json(task);
+  } catch (error) {
+    // Registrar error en consola para debugging
+    console.error('Error fetching task:', error);
+    // Retornar respuesta de error al cliente
+    return NextResponse.json(
+      { error: 'Failed to fetch task' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PUT /api/tasks/[id] - Actualizar una tarea específica
+ * 
+ * Parámetros de ruta:
+ * - id: string - ID único de la tarea a actualizar
+ * 
+ * Body esperado (todos los campos son opcionales):
+ * - title?: string - Nuevo título de la tarea
+ * - description?: string - Nueva descripción
+ * - status?: string - Nuevo estado de la tarea ('pending', 'ongoing', 'completed')
+ * - priority?: 'LOW'|'MEDIUM'|'HIGH'|'URGENT' - Nueva prioridad
+ * - dueDate?: string - Nueva fecha de vencimiento en formato ISO
+ * - startDate?: string - Nueva fecha de inicio en formato ISO
+ * - estimatedHours?: number - Nuevas horas estimadas
+ * - tagIds?: string[] - Array de IDs de etiquetas a asociar
+ */
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    // Extraer el ID de la tarea desde los parámetros de la ruta
+    const { id } = await params;
+    
+    // Parsear el cuerpo de la petición JSON con validación
+    let body;
+    try {
+      const text = await request.text();
+      if (!text || text.trim() === '') {
+        return NextResponse.json(
+          { error: 'Request body is empty' },
+          { status: 400 }
+        );
+      }
+      body = JSON.parse(text);
+    } catch (parseError) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
+    
+    // Extraer campos a actualizar del body
+    const {
+      title,           // Nuevo título (opcional)
+      description,     // Nueva descripción (opcional)
+      status,          // Nuevo estado de la tarea: 'pending', 'ongoing', 'completed' (opcional)
+      priority,        // Nueva prioridad (opcional)
+      dueDate,         // Nueva fecha de vencimiento (opcional)
+      startDate,       // Nueva fecha de inicio (opcional)
+      estimatedHours,  // Nuevas horas estimadas (opcional)
+      groupId,         // Nuevo ID del grupo (opcional)
+      tagIds           // Nuevos IDs de etiquetas (opcional)
+    } = body;
+    
+    // VERIFICACIÓN: Comprobar que la tarea existe antes de actualizar
+    const existingTask = await prisma.task.findUnique({
+      where: { id },
+      include: {
+        tags: true  // Incluir etiquetas actuales para comparación
+      }
+    });
+    
+    if (!existingTask) {
+      return NextResponse.json(
+        { error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+    
+    // VALIDACIÓN: Verificar que el status sea válido si se proporciona
+    if (status) {
+      const validStatuses = ['pending', 'ongoing', 'completed'];
+      if (!validStatuses.includes(status)) {
+        return NextResponse.json(
+          { error: 'Invalid status. Must be one of: pending, ongoing, completed' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // VALIDACIÓN: Verificar que la prioridad sea válida si se proporciona
+    if (priority) {
+      const validPriorities = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+      if (!validPriorities.includes(priority)) {
+        return NextResponse.json(
+          { error: 'Invalid priority. Must be one of: LOW, MEDIUM, HIGH, URGENT' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // VALIDACIÓN 2: Validar fechas proporcionadas para asegurar consistencia
+    if (dueDate && startDate) {
+      try {
+        const due = new Date(dueDate);
+        const start = new Date(startDate);
+        
+        // Verificar que las fechas sean válidas
+        if (isNaN(due.getTime()) || isNaN(start.getTime())) {
+          return NextResponse.json(
+            { error: 'Invalid date format' },
+            { status: 400 }
+          );
+        }
+        
+        // Asegurar que la fecha de vencimiento no sea anterior a la fecha de inicio
+        if (due < start) {
+          return NextResponse.json(
+            { error: 'Due date cannot be before start date' },
+            { status: 400 }
+          );
+        }
+      } catch (dateError) {
+        return NextResponse.json(
+          { error: 'Error processing dates' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // PREPARACIÓN: Construir objeto de datos para actualización
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title?.trim() || null;
+    if (description !== undefined) updateData.description = description?.trim() || null;
+    
+    // Manejar el nuevo campo status y las fechas asociadas
+    if (status !== undefined) {
+      updateData.status = status;
+      
+      // Actualizar fechas según el nuevo estado
+      const now = new Date();
+      if (status === 'ongoing' && existingTask.status !== 'ongoing') {
+        updateData.ongoingDate = now;
+      } else if (status === 'completed' && existingTask.status !== 'completed') {
+        updateData.completedDate = now;
+        // Si no tenía fecha de inicio en proceso, establecerla también
+        if (!existingTask.ongoingDate) {
+          updateData.ongoingDate = now;
+        }
+      } else if (status === 'pending') {
+        // Si vuelve a pending, limpiar las fechas de proceso y completado
+        updateData.ongoingDate = null;
+        updateData.completedDate = null;
+      }
+    }
+    if (priority !== undefined) updateData.priority = priority;
+    if (groupId !== undefined) updateData.groupId = groupId || null;
+    
+    // Handle dates with proper validation
+    if (dueDate !== undefined) {
+      if (dueDate && dueDate !== null && !Array.isArray(dueDate) && dueDate !== '') {
+        try {
+          const dateObj = new Date(dueDate);
+          if (!isNaN(dateObj.getTime())) {
+            updateData.dueDate = dateObj;
+          } else {
+            updateData.dueDate = null;
+          }
+        } catch (error) {
+          updateData.dueDate = null;
+        }
+      } else {
+        // Si no se proporciona fecha de vencimiento, establecer como null
+        updateData.dueDate = null;
+      }
+    }
+    
+    // Manejo de fecha de inicio: validar y convertir a objeto Date
+    if (startDate !== undefined) {
+      if (startDate && startDate !== null && !Array.isArray(startDate) && startDate !== '') {
+        try {
+          const dateObj = new Date(startDate);
+          // Verificar que la fecha sea válida
+          if (!isNaN(dateObj.getTime())) {
+            updateData.startDate = dateObj;
+          } else {
+            updateData.startDate = null;
+          }
+        } catch (error) {
+          // En caso de error en la conversión, establecer como null
+          updateData.startDate = null;
+        }
+      } else {
+        // Si no se proporciona fecha de inicio, establecer como null
+        updateData.startDate = null;
+      }
+    }
+    
+    // Manejo de horas estimadas: establecer valor o null si no se proporciona
+    if (estimatedHours !== undefined) updateData.estimatedHours = estimatedHours || null;
+    
+    // MANEJO DE ETIQUETAS: Actualizar las asociaciones de etiquetas de la tarea
+    if (tagIds !== undefined) {
+      // Eliminar todas las asociaciones de etiquetas existentes
+      await prisma.taskTag.deleteMany({
+        where: { taskId: id }
+      });
+      
+      // Filtrar IDs de etiquetas válidos (no nulos, no vacíos)
+      const validTagIds = tagIds.filter((tagId: string) => tagId && tagId.trim() !== '');
+      
+      // Crear nuevas asociaciones de etiquetas si hay IDs válidos
+      if (validTagIds.length > 0) {
+        updateData.tags = {
+          create: validTagIds.map((tagId: string) => ({
+            tag: {
+              connect: { id: tagId }
+            }
+          }))
+        };
+      }
+    }
+    
+    // LÓGICA ESPECIAL: Si se está marcando como completada una tarea padre, completar todas sus subtareas
+    if (status !== undefined && status === 'completed' && existingTask.status !== 'completed') {
+      // Obtener todas las subtareas de esta tarea
+      const subtasks = await prisma.task.findMany({
+        where: { parentId: id }
+      });
+      
+      // Marcar todas las subtareas como completadas si no lo están ya
+      if (subtasks.length > 0) {
+        const now = new Date();
+        await prisma.task.updateMany({
+          where: { 
+            parentId: id,
+            status: { not: 'completed' }  // Solo actualizar las que no están completadas
+          },
+          data: { 
+            status: 'completed',
+            completedDate: now,
+            ongoingDate: now  // Asegurar que tengan fecha de inicio si no la tenían
+          }
+        });
+        
+        // Registrar actividad para cada subtarea completada automáticamente
+        for (const subtask of subtasks.filter(st => st.status !== 'completed')) {
+          await prisma.activityLog.create({
+            data: {
+              taskId: subtask.id,
+              action: 'TASK_UPDATED',
+              details: 'Marcada como completada automáticamente al completar tarea padre',
+              isUserComment: false
+            }
+          });
+        }
+      }
+    }
+
+    // ACTUALIZACIÓN: Ejecutar la actualización de la tarea en la base de datos
+    const updatedTask = await prisma.task.update({
+      where: { id },
+      data: updateData,
+      include: {
+        // Incluir etiquetas con sus datos completos
+        tags: {
+          include: {
+            tag: true
+          }
+        },
+        // Incluir subtareas asociadas
+        subtasks: true,
+        // Incluir tarea padre si existe
+        parent: true,
+        // Incluir información del grupo
+        group: true
+      }
+    });
+    
+    // LÓGICA ESPECIAL PARA COMPLETAR TAREAS: Actualizar fecha final automáticamente
+    let completionTimeMessage = '';
+    if (status !== undefined && status !== existingTask.status && status === 'completed') {
+      // Cuando se marca como completada, actualizar la fecha final a la fecha actual
+      const completionDate = new Date();
+      
+      // Guardar la fecha original antes de actualizarla (solo si no se ha guardado antes)
+      const updateData: any = { dueDate: completionDate };
+      if (existingTask.dueDate && !existingTask.originalDueDate) {
+        updateData.originalDueDate = existingTask.dueDate;
+      }
+      
+      // Actualizar la fecha final en la base de datos
+      await prisma.task.update({
+        where: { id },
+        data: updateData
+      });
+      
+      // Obtener la tarea actualizada con todos los campos
+      const taskAfterCompletion = await prisma.task.findUnique({
+        where: { id },
+        include: {
+          tags: {
+            include: {
+              tag: true
+            }
+          },
+          subtasks: true,
+          parent: true,
+          group: true
+        }
+      });
+      
+      if (taskAfterCompletion) {
+        Object.assign(updatedTask, taskAfterCompletion);
+      }
+      
+      // Calcular diferencia de días si había una fecha prevista original
+      if (existingTask.dueDate) {
+        const originalDueDate = new Date(existingTask.dueDate);
+        const completionDateOnly = new Date(completionDate.getFullYear(), completionDate.getMonth(), completionDate.getDate());
+        const originalDateOnly = new Date(originalDueDate.getFullYear(), originalDueDate.getMonth(), originalDueDate.getDate());
+        
+        const timeDifference = completionDateOnly.getTime() - originalDateOnly.getTime();
+        const daysDifference = Math.round(timeDifference / (1000 * 60 * 60 * 24));
+        
+        if (daysDifference < 0) {
+          // Completada antes de tiempo
+          const daysEarly = Math.abs(daysDifference);
+          completionTimeMessage = `Tarea completada ${daysEarly} día${daysEarly === 1 ? '' : 's'} antes de lo previsto inicialmente`;
+        } else if (daysDifference > 0) {
+          // Completada después de tiempo
+          completionTimeMessage = `Tarea completada ${daysDifference} día${daysDifference === 1 ? '' : 's'} después de lo previsto inicialmente`;
+        } else {
+          // Completada exactamente en la fecha prevista
+          completionTimeMessage = 'Tarea completada exactamente en la fecha prevista';
+        }
+      } else {
+        // No había fecha prevista
+        completionTimeMessage = 'Tarea completada (sin fecha límite previa)';
+      }
+    }
+
+    // REGISTRO DE ACTIVIDADES: Crear log de los cambios realizados en la tarea
+    const changes = [];
+    // Detectar qué campos han cambiado comparando con los valores originales
+    if (title !== undefined && title !== existingTask.title) {
+      changes.push(`título cambiado de "${existingTask.title}" a "${title}"`);
+    }
+    if (description !== undefined && description !== existingTask.description) {
+      const oldDesc = existingTask.description || '(sin descripción)';
+      const newDesc = description || '(sin descripción)';
+      changes.push(`descripción cambiada de "${oldDesc}" a "${newDesc}"`);
+    }
+    if (status !== undefined && status !== existingTask.status) {
+      // Mensaje específico para cambios de estado
+      const statusLabels = { 
+        pending: 'pendiente', 
+        ongoing: 'en proceso', 
+        completed: 'completada' 
+      };
+      const oldStatus = statusLabels[existingTask.status as keyof typeof statusLabels] || existingTask.status;
+      const newStatus = statusLabels[status as keyof typeof statusLabels] || status;
+      changes.push(`estado cambiado de ${oldStatus} a ${newStatus}`);
+    }
+    if (priority !== undefined && priority !== existingTask.priority) {
+      const priorityLabels = { LOW: 'Baja', MEDIUM: 'Media', HIGH: 'Alta', URGENT: 'Urgente' };
+      const oldPriority = priorityLabels[existingTask.priority as keyof typeof priorityLabels] || existingTask.priority;
+      const newPriority = priorityLabels[priority as keyof typeof priorityLabels] || priority;
+      changes.push(`prioridad cambiada de ${oldPriority} a ${newPriority}`);
+    }
+    if (dueDate !== undefined) {
+      const oldDate = existingTask.dueDate ? new Date(existingTask.dueDate).toLocaleDateString('es-ES') : 'sin fecha';
+      const newDate = dueDate ? new Date(dueDate).toLocaleDateString('es-ES') : 'sin fecha';
+      changes.push(`fecha límite cambiada de ${oldDate} a ${newDate}`);
+    }
+    if (startDate !== undefined) {
+      const oldDate = existingTask.startDate ? new Date(existingTask.startDate).toLocaleDateString('es-ES') : 'sin fecha';
+      const newDate = startDate ? new Date(startDate).toLocaleDateString('es-ES') : 'sin fecha';
+      changes.push(`fecha de inicio cambiada de ${oldDate} a ${newDate}`);
+    }
+    if (estimatedHours !== undefined) {
+      const oldHours = existingTask.estimatedHours || 0;
+      changes.push(`horas estimadas cambiadas de ${oldHours}h a ${estimatedHours}h`);
+    }
+    if (tagIds !== undefined) {
+      changes.push('etiquetas actualizadas');
+    }
+    
+    // Crear entrada en el log de actividades solo si hubo cambios
+    if (changes.length > 0) {
+      // Detectar si la actualización es por resolución de conflictos de fechas
+      const isConflictResolution = (
+        (startDate !== undefined || dueDate !== undefined) &&
+        request.headers.get('x-conflict-resolution') === 'true'
+      );
+      
+      let activityDetails;
+      if (isConflictResolution) {
+        activityDetails = `Tarea padre "${updatedTask.title}" actualizada automáticamente por conflicto de fechas detectado con subtarea: ${changes.join(', ')}`;
+      } else if (completionTimeMessage) {
+        // Si hay mensaje de tiempo de completado, usarlo como detalle principal
+        activityDetails = completionTimeMessage;
+      } else {
+        activityDetails = changes.join(', ');
+      }
+      
+      await prisma.activityLog.create({
+        data: {
+          taskId: id,
+          action: status === 'completed' ? 'COMPLETED' : 'UPDATED',
+          details: activityDetails
+        }
+      });
+    }
+
+    // DETECCIÓN DE CONFLICTOS: Verificar si los cambios pueden generar conflictos
+    const shouldCheckConflicts = (
+      startDate !== undefined || 
+      dueDate !== undefined || 
+      estimatedHours !== undefined ||
+      priority !== undefined
+    );
+
+    // SISTEMA DESHABILITADO: Detección automática de conflictos de fechas
+    // Descomentar las siguientes líneas para reactivar la funcionalidad
+    // let conflictResult = { hasConflicts: false, conflicts: [] };
+    // if (shouldCheckConflicts) {
+    //   conflictResult = await detectConflictsForTask({
+    //     id: updatedTask.id,
+    //     title: updatedTask.title,
+    //     startDate: updatedTask.startDate,
+    //     dueDate: updatedTask.dueDate,
+    //     estimatedHours: updatedTask.estimatedHours,
+    //     priority: updatedTask.priority as 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+    //   }, id); // Excluir la tarea actual de la detección de conflictos
+
+    //   if (conflictResult.hasConflicts) {
+    //     await saveDetectedConflicts(updatedTask.id, conflictResult.conflicts);
+    //   }
+    // }
+
+    // RESPUESTA CON CONFLICTOS: Incluir información de conflictos en la respuesta (deshabilitado)
+    // const taskWithConflicts = {
+    //   ...updatedTask,
+    //   conflicts: conflictResult.conflicts
+    // };
+
+    // RESPUESTA EXITOSA: Retornar la tarea actualizada con todas sus relaciones
+    return NextResponse.json(updatedTask);
+  } catch (error) {
+    // MANEJO DE ERRORES: Registrar error y retornar respuesta de error 500
+    console.error('Error updating task:', error);
+    return NextResponse.json(
+      { error: 'Failed to update task', details: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * DELETE /api/tasks/[id] - Eliminar una tarea específica
+ * 
+ * Elimina una tarea por su ID, incluyendo todas sus subtareas y registros relacionados.
+ * Si la tarea eliminada era una subtarea, registra la eliminación en el log de actividades de la tarea padre.
+ * 
+ * @param request - Objeto de solicitud HTTP
+ * @param params - Parámetros de ruta que contienen el ID de la tarea
+ * @param params.id - ID único de la tarea a eliminar
+ * 
+ * @returns Respuesta JSON con mensaje de confirmación o error
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    
+    // VERIFICACIÓN: Comprobar si la tarea existe antes de eliminarla
+    const existingTask = await prisma.task.findUnique({
+      where: { id },
+      include: {
+        // Incluir subtareas para verificar si tiene dependencias
+        subtasks: true
+      }
+    });
+    
+    // Error 404 si la tarea no existe
+    if (!existingTask) {
+      return NextResponse.json(
+        { error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+    
+    // ELIMINACIÓN: Eliminar la tarea (las eliminaciones en cascada manejan subtareas y registros relacionados)
+    await prisma.task.delete({
+      where: { id }
+    });
+    
+    // REGISTRO DE ACTIVIDAD: Si era una subtarea, registrar la eliminación en la tarea padre
+    if (existingTask.parentId) {
+      await prisma.activityLog.create({
+        data: {
+          taskId: existingTask.parentId,
+          action: 'SUBTASK_DELETED',
+          details: `Subtask "${existingTask.title}" was deleted`
+        }
+      });
+    }
+    
+    // RESPUESTA EXITOSA: Confirmar eliminación
+    return NextResponse.json(
+      { message: 'Task deleted successfully' },
+      { status: 200 }
+    );
+  } catch (error) {
+    // MANEJO DE ERRORES: Registrar error y retornar respuesta de error 500
+    console.error('Error deleting task:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete task' },
+      { status: 500 }
+    );
+  }
+}

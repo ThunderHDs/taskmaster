@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id              String         @id @default(cuid())
+  title           String
+  description     String?
+  status          String         @default("pending")
+  completed       Boolean        @default(false)
+  priority        String         @default("MEDIUM")
+  dueDate         DateTime?
+  originalDueDate DateTime?
+  startDate       DateTime?
+  ongoingDate     DateTime?
+  completedDate   DateTime?
+  estimatedHours  Int?
+  parentId        String?
+  groupId         String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  activities      ActivityLog[]
+  conflictingWith DateConflict[] @relation("ConflictingTasks")
+  conflicts       DateConflict[] @relation("TaskConflicts")
+  tags            TaskTag[]
+  group           TaskGroup?     @relation(fields: [groupId], references: [id])
+  parent          Task?          @relation("TaskHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks        Task[]         @relation("TaskHierarchy")
+
+  @@map("tasks")
+}
+
+model TaskGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String   @default("#6366F1")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tasks       Task[]
+
+  @@map("task_groups")
+}
+
+model Tag {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String    @default("#3B82F6")
+  createdAt DateTime  @default(now())
+  tasks     TaskTag[]
+
+  @@map("tags")
+}
+
+model TaskTag {
+  taskId String
+  tagId  String
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@map("task_tags")
+}
+
+model DateConflict {
+  id                String   @id @default(cuid())
+  taskId            String
+  conflictingTaskId String
+  type              String
+  severity          String   @default("MEDIUM")
+  message           String
+  createdAt         DateTime @default(now())
+  conflictingTask   Task     @relation("ConflictingTasks", fields: [conflictingTaskId], references: [id], onDelete: Cascade)
+  task              Task     @relation("TaskConflicts", fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("date_conflicts")
+}
+
+model ActivityLog {
+  id            String   @id @default(cuid())
+  taskId        String
+  action        String
+  details       String?
+  comment       String?
+  isUserComment Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  task          Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("activity_logs")
+}
